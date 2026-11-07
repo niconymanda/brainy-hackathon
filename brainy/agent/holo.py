@@ -65,10 +65,10 @@ class HoloClient:
                                          headers={"Authorization": "Bearer " + self.api_key}, json=data)
             response.raise_for_status()
             return response.json()["choices"][0]["message"]["content"].strip()
-        if self.http is not None:
-            return await send(self.http)
-        async with httpx.AsyncClient(timeout=90) as client:
-            return await send(client)
+        if self.http is None:
+            # One client for the whole task: no new TLS handshake per model call.
+            self.http = httpx.AsyncClient(timeout=90)
+        return await send(self.http)
 
     async def decide(self, screenshot, goal, history, page_context=None):
         prompt = (

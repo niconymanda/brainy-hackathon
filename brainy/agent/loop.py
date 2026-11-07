@@ -1,5 +1,7 @@
 import hashlib
+import os
 import re
+import sys
 import time
 
 from .events import AgentError, AgentStep, ConfirmRequest, Done, NeedsUser
@@ -12,6 +14,20 @@ WRAP_UP = ("Search budget used up: stop searching now. Use ask_user to propose t
            "If you are already completing a booking that matches the request, ignore this and continue.")
 OUT_OF_BUDGET = "This is taking longer than expected. Should I keep going, or stop here?"
 SECRET_QUESTION = re.compile(r"\b(?:password|mot\s+de\s+passe|card|carte|cvv|cvc|code|pin|iban|otp|sms)\b", re.I)
+
+
+class Laps:
+    """Per-phase timings on stderr when BRAINY_TIMING is set."""
+
+    def __init__(self):
+        self.on = bool(os.getenv("BRAINY_TIMING"))
+        self.last = time.monotonic()
+
+    def __call__(self, label):
+        now = time.monotonic()
+        if self.on:
+            print(f"[timing] {label}: {now - self.last:.2f}s", file=sys.stderr, flush=True)
+        self.last = now
 
 
 class WebAgent:
@@ -48,15 +64,19 @@ class WebAgent:
         step = "navigate"
         budget_steps, budget_start, nudged_at = 0, time.monotonic(), None
         facts, recent = [], []
+        lap = Laps()
         try:
             await self.browser.start_run()
             if start_url:
                 await self.browser.goto(start_url)
             for _ in range(self.max_steps):
+                lap("between steps")
                 step = "screenshot"
                 screenshot = await self.browser.screenshot()
+                lap("screenshot")
                 step = "page context"
                 page_context = await self.browser.page_context()
+                lap("page context")
                 signature = (page_context["url"], hashlib.sha256(screenshot).digest())
                 history.extend(await self.browser.take_recovery_notes())
                 if pending:
@@ -78,6 +98,7 @@ class WebAgent:
                 step = "model call"
                 known = ("\nThe user already answered (settled, never ask again):\n- " + "\n- ".join(facts)) if facts else ""
                 action = await self.client.decide(screenshot, goal + known, history, page_context=page_context)
+                lap(f"decide ({action.action})")
                 key = (action.action, " ".join(action.target.casefold().split()))
                 recent = (recent + [key])[-6:]
                 if action.action in {"click", "type"} and recent.count(key) >= 3:
@@ -127,11 +148,14 @@ class WebAgent:
                 if action.action == "navigate":
                     step = "navigate"
                     await self.browser.goto(action.url)
+                    lap("navigate")
                 elif action.action in {"click", "confirm", "type"}:
                     step = "model call"
                     x, y = await self.client.locate(screenshot, action.target, self.browser.viewport)
+                    lap("locate")
                     step = "click"
                     await self.browser.click(x, y)
+                    lap("click")
                     if action.action == "type":
                         step = "type"
                         value = await self.browser.type(action.text)
