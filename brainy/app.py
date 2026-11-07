@@ -126,13 +126,16 @@ def open_profile():
     if not PROFILE_FILE.exists():
         PROFILE_FILE.write_text(PROFILE_TEMPLATE, encoding="utf-8")
         PROFILE_FILE.chmod(0o600)
-    if sys.platform == "win32":
-        os.startfile(PROFILE_FILE)
-    elif sys.platform == "darwin":
-        subprocess.run(["open", "-t", str(PROFILE_FILE)], check=False)
-    else:
-        subprocess.run(["xdg-open", str(PROFILE_FILE)], check=False)
     print(f"Fiche profil : {PROFILE_FILE}")
+    try:
+        if sys.platform == "win32":
+            os.startfile(PROFILE_FILE)
+        elif sys.platform == "darwin":
+            subprocess.run(["open", "-t", str(PROFILE_FILE)], check=False)
+        else:
+            subprocess.run(["xdg-open", str(PROFILE_FILE)], check=False)
+    except OSError:
+        print("Ouvre ce fichier dans un éditeur de texte.")
 
 
 def brainy_goal(request, now=None):
