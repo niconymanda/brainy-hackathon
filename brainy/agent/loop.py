@@ -3,6 +3,7 @@ import re
 
 from .events import AgentError, AgentStep, ConfirmRequest, Done, NeedsUser
 from .debug import debug_log
+from .browser import normalize_choice
 
 
 RISKY = re.compile(r"pay|payer|submit|envoyer|valider|book|réserver|confirm|acheter|order|commander", re.I)
@@ -10,15 +11,17 @@ SECRET_QUESTION = re.compile(r"\b(?:password|mot\s+de\s+passe|card|carte|cvv|cvc
 
 
 class WebAgent:
-    def __init__(self, client, browser, ask, max_steps=25, debug=False):
+    def __init__(self, client, browser, ask, max_steps=25, debug=False, choices=None):
         self.client = client
         self.browser = browser
         self.ask = ask
         self.max_steps = max_steps
         self.debug = debug
+        self.choices = list(choices or [])
 
     async def run(self, goal, start_url=None):
         history = []
+        choices = self.choices.copy()
         pending = None
         last_key = None
         unchanged_count = 0
@@ -49,6 +52,18 @@ class WebAgent:
                         history.append(f"Your last {key[0]} on '{target}' had no visible effect; do not repeat it, "
                                        "try a different approach (e.g. results may already be shown, scroll, "
                                        "choose a suggestion first, or ask the user).")
+                if choices and not RISKY.search(choices[0]):
+                    text = choices[0]
+                    step = "select_text"
+                    element = await self.browser.find_choice(text)
+                    if element is not None:
+                        result = await self.browser.select_choice(element, text)
+                        if result is not None:
+                            yield AgentStep(f"Selecting {text}.", "select_text")
+                            history.extend([f"Selected {text} directly", result])
+                            choices.pop(0)
+                            pending = (("select_text", " ".join(text.casefold().split())), signature, text)
+                            continue
                 step = "model call"
                 action = await self.client.decide(screenshot, goal, history, page_context=page_context)
                 target = action.text if action.action == "select_text" else action.target
@@ -100,6 +115,10 @@ class WebAgent:
                         await self.browser.click(x, y)
                         result = f"Clicked {action.text!r} using grounding; inspect next screenshot for selection state."
                     history.append(result)
+                    for index, choice in enumerate(choices):
+                        if normalize_choice(choice) == normalize_choice(action.text):
+                            choices.pop(index)
+                            break
                 elif action.action in {"click", "confirm", "type"}:
                     step = "model call"
                     x, y = await self.client.locate(screenshot, action.target, self.browser.viewport)

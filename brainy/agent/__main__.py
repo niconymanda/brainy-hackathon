@@ -46,7 +46,7 @@ async def run_goal(goal, args):
     async with Browser(headless=args.headless, profile_dir=args.profile_dir,
                        channel=args.channel, debug=args.debug) as browser:
         status = 0
-        async for event in WebAgent(client, browser, ask, debug=args.debug).run(goal, args.url):
+        async for event in WebAgent(client, browser, ask, debug=args.debug, choices=args.choose).run(goal, args.url):
             if isinstance(event, AgentStep):
                 print(event.narration, flush=True)
             elif isinstance(event, Done):
@@ -73,6 +73,8 @@ def add_agent_arguments(parser):
     parser.add_argument("--url")
     parser.add_argument("--model", default=os.getenv("H_MODEL") or "holo3-1-35b-a3b")
     parser.add_argument("--headless", action="store_true")
+    parser.add_argument("--choose", action="append", default=[], metavar="TEXT",
+                        help="Choose an exact visible label directly, in order; repeat for multiple choices.")
     parser.add_argument("--channel", help="Installed browser channel, e.g. chrome or msedge (default: bundled Chromium).")
     parser.add_argument("--debug", action="store_true", help="Local exception and page lifecycle diagnostics on stderr.")
     parser.add_argument("--profile-dir", help="Optional persistent browser profile; contains private browsing data.")

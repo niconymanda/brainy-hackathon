@@ -1,10 +1,16 @@
 import asyncio
 import re
+import unicodedata
 from urllib.parse import urlsplit
 
 from playwright.async_api import Error, async_playwright
 
 from .debug import debug_log
+
+
+def normalize_choice(text):
+    text = unicodedata.normalize("NFKD", text.casefold())
+    return " ".join("".join(c for c in text if not unicodedata.combining(c)).split())
 
 
 class Browser:
@@ -118,7 +124,7 @@ class Browser:
         for _ in range(2):
             page = await self.ensure_page()
             try:
-                await page.wait_for_load_state("domcontentloaded", timeout=5000)
+                await page.wait_for_load_state("domcontentloaded", timeout=2500)
                 return
             except Error:
                 if page is await self.ensure_page():
@@ -164,7 +170,7 @@ class Browser:
                 raise
             await self.ensure_page()
         try:
-            await asyncio.wait_for(self._page_opened.wait(), timeout=0.5)
+            await asyncio.wait_for(self._page_opened.wait(), timeout=0.25)
         except asyncio.TimeoutError:
             pass
         await self._wait_for_page()
@@ -181,8 +187,8 @@ class Browser:
             return None
         field = self.page.locator(":focus")
         await field.fill("")
-        await field.press_sequentially(text, delay=65)
-        await self.page.wait_for_timeout(1000)
+        await field.press_sequentially(text, delay=25)
+        await self.page.wait_for_timeout(450)
         return await self.page.evaluate("""() => {
             const el = document.activeElement;
             if (!el) return '';
@@ -190,36 +196,62 @@ class Browser:
             return el.isContentEditable ? el.textContent : (el.value || '');
         }""")
 
-    async def select_text(self, text):
+    async def find_choice(self, text):
+        if not normalize_choice(text):
+            return None
+        return await self.select_text(text, exact=True, find_only=True)
+
+    async def select_choice(self, element, text):
+        return await self._select_first_visible(element, text, exact=True)
+
+    async def select_text(self, text, exact=False, find_only=False):
         page = await self.ensure_page()
-        name = re.compile(re.escape(text), re.I)
+        name = re.compile(".*" if exact else re.escape(text), re.I)
+        options = {"exact": True, "find_only": find_only} if exact else {}
         frames = page.frames
         for role in ("radio", "option", "checkbox", "button", "link", "menuitem", "tab"):
             for frame in frames:
                 matches = frame.get_by_role(role, name=name, include_hidden=role == "option")
-                result = await self._select_first_visible(matches, text)
+                result = await self._select_first_visible(matches, text, **options)
                 if result is not None:
                     return result
         for method in ("get_by_label", "get_by_text"):
             for frame in frames:
-                result = await self._select_first_visible(getattr(frame, method)(name), text)
+                result = await self._select_first_visible(getattr(frame, method)(name), text, **options)
                 if result is not None:
                     return result
         return None
 
-    async def _select_first_visible(self, matches, text):
+    async def _select_first_visible(self, matches, text, exact=False, find_only=False):
         for index in range(await matches.count()):
             element = matches.nth(index)
             kind = await element.evaluate("el => ({tag: el.tagName, type: el.type, role: el.getAttribute('role')})")
+            if exact:
+                label = await element.evaluate("""el => {
+                    const control = el.closest('button, a[href], input, select, option, label, [role="radio"], [role="option"], [role="checkbox"], [role="button"], [role="link"], [role="menuitem"], [role="tab"], [onclick], [tabindex]');
+                    if (!control || control.disabled) return null;
+                    if (control.tagName === 'INPUT') {
+                        if (['button', 'submit'].includes(control.type)) return control.value;
+                        return Array.from(control.labels || []).filter(label => label.getClientRects().length)
+                            .map(label => label.innerText).join(' ');
+                    }
+                    return control.innerText;
+                }""")
+                if label is None or normalize_choice(label) != normalize_choice(text):
+                    continue
             if kind["tag"] == "OPTION":
                 select = element.locator("xpath=ancestor::select[1]")
                 if not await select.is_visible():
                     continue
+                if find_only:
+                    return element
                 await select.scroll_into_view_if_needed()
                 await select.select_option(label=await element.evaluate("el => el.label"))
             else:
                 if not await element.is_visible():
                     continue
+                if find_only:
+                    return element
                 await element.scroll_into_view_if_needed()
                 if kind.get("type") in {"radio", "checkbox"} or kind.get("role") in {"radio", "checkbox"}:
                     await element.check()

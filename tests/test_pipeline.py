@@ -49,7 +49,8 @@ class PipelineTests(unittest.TestCase):
                                            {"GLADIA_API_KEY": "gladia-key", "H_API_KEY": "h-key"}, clear=True))
             stack.enter_context(patch("brainy.__main__.load_dotenv"))
             stack.enter_context(patch("sys.argv", ["brainy", "--headless", "--url", "https://example.org",
-                                                   "--model", "test-model", "--device", "2"]))
+                                                   "--model", "test-model", "--device", "2",
+                                                   "--choose", "Consultation", "--choose", "Guizmo Coco"]))
             gladia = stack.enter_context(patch("brainy.stt.__main__.GladiaClient"))
             gladia.return_value.transcribe = AsyncMock(side_effect=transcribe)
             mic = stack.enter_context(patch("brainy.stt.__main__.microphone_audio", side_effect=lambda _: audio()))
@@ -71,6 +72,7 @@ class PipelineTests(unittest.TestCase):
         mic.assert_called_once_with(2)
         browser.assert_called_once_with(headless=True, profile_dir=None, channel=None, debug=False)
         holo.assert_called_once_with("h-key", "test-model")
+        self.assertEqual(agent.call_args.kwargs["choices"], ["Consultation", "Guizmo Coco"])
         agent.return_value.run.assert_called_once_with(build_h_prompt("Train task", "Find trains\nto Lyon"),
                                                       "https://example.org")
         self.assertIn("Searching\nFinished", stdout)

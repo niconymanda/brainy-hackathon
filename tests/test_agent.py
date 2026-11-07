@@ -11,7 +11,7 @@ from playwright.async_api import Error
 from brainy.agent.browser import Browser
 from brainy.agent.debug import debug_log
 from brainy.agent.__main__ import run
-from brainy.agent.events import AgentError, ConfirmRequest, Done, NeedsUser
+from brainy.agent.events import AgentError, AgentStep, ConfirmRequest, Done, NeedsUser
 from brainy.agent.holo import Action, HoloClient, parse_action, parse_click
 from brainy.agent.loop import WebAgent
 
@@ -59,6 +59,69 @@ class AgentTests(unittest.IsolatedAsyncioTestCase):
     async def collect(self, actions, max_steps=5):
         self.client.decide.side_effect = actions
         return [event async for event in WebAgent(self.client, self.browser, self.ask, max_steps).run("test")]
+
+    async def test_choice_skips_model_and_counts_toward_limit(self):
+        self.browser.select_choice.return_value = "Selected: checked=true"
+        events = [event async for event in WebAgent(self.client, self.browser, self.ask,
+                  max_steps=1, choices=["Consultation"]).run("test")]
+        self.browser.select_choice.assert_awaited_once_with(self.browser.find_choice.return_value, "Consultation")
+        self.client.decide.assert_not_awaited()
+        self.assertEqual(events[0], AgentStep("Selecting Consultation.", "select_text"))
+        self.assertIsInstance(events[-1], AgentError)
+
+    async def test_choice_order_and_missing_choice_falls_through(self):
+        self.browser.find_choice.return_value = None
+        self.client.decide.return_value = Action("done")
+        events = [event async for event in WebAgent(self.client, self.browser, self.ask,
+                  choices=["Consultation", "Guizmo Coco"]).run("test")]
+        self.browser.find_choice.assert_awaited_once_with("Consultation")
+        self.browser.select_choice.assert_not_awaited()
+        self.client.decide.assert_awaited_once()
+        self.assertIsInstance(events[-1], Done)
+
+    async def test_choices_pop_and_preserve_history(self):
+        self.browser.select_choice.return_value = "Selected: checked=true"
+        self.client.decide.return_value = Action("done")
+        events = [event async for event in WebAgent(self.client, self.browser, self.ask,
+                  choices=["Consultation", "Guizmo Coco"]).run("test")]
+        self.assertEqual([call.args[0] for call in self.browser.find_choice.await_args_list],
+                         ["Consultation", "Guizmo Coco"])
+        self.assertEqual(self.client.decide.await_count, 1)
+        self.assertIn("Selected Consultation directly", self.client.decide.call_args.args[2])
+        self.assertIsInstance(events[-1], Done)
+
+    async def test_holo_selection_pops_normalized_pending_choice(self):
+        self.browser.find_choice.return_value = None
+        self.client.decide.side_effect = [Action("select_text", text="  ACNE "), Action("done")]
+        events = [event async for event in WebAgent(self.client, self.browser, self.ask,
+                  choices=["acné", "Guizmo Coco"]).run("test")]
+        self.assertEqual([call.args[0] for call in self.browser.find_choice.await_args_list],
+                         ["acné", "Guizmo Coco"])
+        self.assertIsInstance(events[-1], Done)
+
+    async def test_risky_choice_keeps_confirmation_gate(self):
+        self.client.decide.return_value = Action("select_text", text="Pay")
+        events = [event async for event in WebAgent(self.client, self.browser, self.ask,
+                  choices=["Pay"]).run("test")]
+        self.browser.find_choice.assert_not_awaited()
+        self.browser.select_choice.assert_not_awaited()
+        self.browser.select_text.assert_not_awaited()
+        self.assertTrue(any(isinstance(event, ConfirmRequest) for event in events))
+
+    async def test_choice_selection_disappears_before_click(self):
+        self.browser.select_choice.return_value = None
+        self.client.decide.return_value = Action("done")
+        events = [event async for event in WebAgent(self.client, self.browser, self.ask,
+                  choices=["Consultation"]).run("test")]
+        self.client.decide.assert_awaited_once()
+        self.assertIsInstance(events[-1], Done)
+
+    async def test_choice_error_is_categorized(self):
+        self.browser.find_choice.side_effect = Error("private details")
+        events = [event async for event in WebAgent(self.client, self.browser, self.ask,
+                  choices=["Consultation"]).run("test")]
+        self.assertIn("select_text (Error)", events[-1].reason)
+        self.assertNotIn("private details", events[-1].reason)
 
     async def test_gate_blocks_without_explicit_yes(self):
         for answer in ("non", "", "maybe", "yes please", "no"):
@@ -339,6 +402,37 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         page.is_closed.return_value = False
         return page
 
+    async def test_find_choice_uses_exact_non_clicking_resolution(self):
+        browser = Browser()
+        browser.select_text = AsyncMock(return_value="element")
+        self.assertEqual(await browser.find_choice("Consultation"), "element")
+        browser.select_text.assert_awaited_once_with("Consultation", exact=True, find_only=True)
+
+    async def test_empty_choice_is_not_resolved(self):
+        browser = Browser()
+        browser.select_text = AsyncMock()
+        self.assertIsNone(await browser.find_choice("  "))
+        browser.select_text.assert_not_awaited()
+
+    async def test_exact_choice_equality_visibility_and_normalization(self):
+        for label, visible, expected in (("Consultation vidéo", True, False),
+                                         ("Consultation", False, False),
+                                         ("  CONSULTATION  ", True, True),
+                                         ("Consultation pour ACNE", True, True),
+                                         (None, True, False)):
+            with self.subTest(label=label, visible=visible):
+                browser = Browser()
+                matches = MagicMock()
+                matches.count = AsyncMock(return_value=1)
+                element = matches.nth.return_value
+                element.evaluate = AsyncMock(side_effect=[{"tag": "BUTTON"}, label])
+                element.is_visible = AsyncMock(return_value=visible)
+                text = "Consultation pour acné" if label == "Consultation pour ACNE" else "Consultation"
+                result = await browser._select_first_visible(matches, text, exact=True, find_only=True)
+                self.assertIs(result, element if expected else None)
+                element.click.assert_not_called()
+                element.scroll_into_view_if_needed.assert_not_called()
+
     async def test_select_text_resolution_order_across_frames(self):
         browser = Browser()
         browser.page = self.page_mock()
@@ -534,7 +628,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await browser.click(10, 20)
         self.assertIs(browser.page, popup)
         original.mouse.click.assert_awaited_once_with(10, 20)
-        popup.wait_for_load_state.assert_awaited_once_with("domcontentloaded", timeout=5000)
+        popup.wait_for_load_state.assert_awaited_once_with("domcontentloaded", timeout=2500)
 
     async def test_load_wait_is_best_effort(self):
         browser = Browser()
@@ -577,8 +671,8 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await browser.type("Lyon"), "Lyon")
         browser.page.locator.assert_called_once_with(":focus")
         field.fill.assert_awaited_once_with("")
-        field.press_sequentially.assert_awaited_once_with("Lyon", delay=65)
-        browser.page.wait_for_timeout.assert_awaited_once_with(1000)
+        field.press_sequentially.assert_awaited_once_with("Lyon", delay=25)
+        browser.page.wait_for_timeout.assert_awaited_once_with(450)
         browser.page.keyboard.press.assert_not_called()
 
     async def test_screenshot_navigation_retry(self):
@@ -610,7 +704,7 @@ class CLITests(unittest.IsolatedAsyncioTestCase):
         async def events(*args):
             yield Done("Finished")
 
-        args = Namespace(headless=False, profile_dir=None, model="test", goal="test", url=None, debug=False, channel=None)
+        args = Namespace(headless=False, profile_dir=None, model="test", goal="test", url=None, debug=False, channel=None, choose=[])
         with patch("brainy.agent.__main__.Browser") as browser, \
                 patch("brainy.agent.__main__.HoloClient"), \
                 patch("brainy.agent.__main__.WebAgent") as agent, \
@@ -630,7 +724,7 @@ class CLITests(unittest.IsolatedAsyncioTestCase):
                     async def events(*args):
                         yield event
 
-                    args = Namespace(headless=headless, profile_dir=None, model="test", goal="test", url=None, debug=False, channel=None)
+                    args = Namespace(headless=headless, profile_dir=None, model="test", goal="test", url=None, debug=False, channel=None, choose=[])
                     with patch("brainy.agent.__main__.Browser") as browser, \
                             patch("brainy.agent.__main__.HoloClient"), \
                             patch("brainy.agent.__main__.WebAgent") as agent, \
@@ -650,7 +744,7 @@ class CLITests(unittest.IsolatedAsyncioTestCase):
             yield Done("Finished")
 
         args = Namespace(headless=True, profile_dir="profile", model="test", goal="test", url=None,
-                         debug=True, channel="chrome")
+                         debug=True, channel="chrome", choose=["Consultation", "Guizmo Coco"])
         with patch("brainy.agent.__main__.Browser") as browser, \
                 patch("brainy.agent.__main__.HoloClient"), \
                 patch("brainy.agent.__main__.WebAgent") as agent, patch("builtins.print"):
@@ -660,6 +754,7 @@ class CLITests(unittest.IsolatedAsyncioTestCase):
             await run(args)
             browser.assert_called_once_with(headless=True, profile_dir="profile", channel="chrome", debug=True)
             self.assertTrue(agent.call_args.kwargs["debug"])
+            self.assertEqual(agent.call_args.kwargs["choices"], ["Consultation", "Guizmo Coco"])
 
 
 class DebugTests(unittest.TestCase):
