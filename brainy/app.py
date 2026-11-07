@@ -307,6 +307,17 @@ def static_response(path):
     return Response(200, "OK", headers, body)
 
 
+async def login(args):
+    """Open the agent's browser profile so the user can sign in once; cookies persist for later runs."""
+    app = BrainyApp(args)
+    browser = await app.get_browser()
+    await browser.goto(args.login)
+    print("Connecte-toi dans la fenêtre du navigateur, puis ferme-la.")
+    while not browser._context_closed:
+        await asyncio.sleep(1)
+    await app.close()
+
+
 def start_hotkey(combo, loop, app):
     """Global shortcut (works when Brainy is in the background). macOS asks for Accessibility access."""
     try:
@@ -358,10 +369,16 @@ def main():
                         help="Installed browser for the agent (chrome, msedge); falls back to bundled Chromium.")
     parser.add_argument("--model", default=os.getenv("H_MODEL") or "holo3-1-35b-a3b")
     parser.add_argument("--max-steps", type=int, default=40)
+    parser.add_argument("--login", metavar="URL", nargs="?", const="https://www.doctolib.fr/sessions/new",
+                        help="Only open the agent's browser to sign in to a site once (default: Doctolib).")
     args = parser.parse_args()
     args.language = args.language or ["fr"]
     if args.device and args.device.isdecimal():
         args.device = int(args.device)
+
+    if args.login:
+        asyncio.run(login(args))
+        return 0
 
     ready = threading.Event()
     server = threading.Thread(target=lambda: asyncio.run(serve_app(args, ready)), daemon=True)

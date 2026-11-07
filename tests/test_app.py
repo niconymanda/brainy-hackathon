@@ -171,3 +171,28 @@ class FrenchTests(unittest.TestCase):
     def test_doctolib_tip_only_for_doctolib(self):
         self.assertIn("doctolib.fr/dermatologue/paris", app_module.site_tips("Cherche sur Doctolib"))
         self.assertEqual(app_module.site_tips("Commande une pizza"), "")
+
+
+class LoginTests(unittest.TestCase):
+    def test_login_opens_url_and_waits_for_close(self):
+        class FakeBrowser:
+            _context_closed = False
+            visited = None
+
+            async def goto(self, url):
+                self.visited = url
+                self._context_closed = True
+
+            async def __aexit__(self, *exc):
+                pass
+
+        fake = FakeBrowser()
+        args = argparse.Namespace(login="https://www.doctolib.fr/sessions/new", channel=None)
+
+        async def get_browser(self):
+            self.browser = fake
+            return fake
+
+        with patch.object(app_module.BrainyApp, "get_browser", get_browser):
+            asyncio.run(app_module.login(args))
+        self.assertEqual(fake.visited, "https://www.doctolib.fr/sessions/new")
