@@ -118,8 +118,9 @@ def open_choice(question, request):
 def obvious_question(question, request=""):
     """Yes/no check-ins the agent should settle itself; open questions, secrets and the budget check go to the user."""
     sentences = re.split(r"(?<=[.!?])\s+", question.strip())
-    asked = next((s for s in reversed(sentences) if s.endswith("?")), sentences[-1])
-    return (bool(OBVIOUS.search(asked)) and not OPEN_QUESTION.search(asked) and not open_choice(question, request)
+    questions = [s for s in sentences if s.endswith("?")] or sentences[-1:]
+    return (bool(OBVIOUS.search(questions[-1])) and not any(OPEN_QUESTION.search(q) for q in questions)
+            and not open_choice(question, request)
             and not SECRET_QUESTION.search(question) and question != french_question(OUT_OF_BUDGET))
 
 
