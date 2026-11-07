@@ -142,9 +142,31 @@ Reuse `brainy.stt.GladiaClient.transcribe(audio, callback, stop)` with an async 
 
 > *Réutilisez `brainy.stt.GladiaClient.transcribe(audio, callback, stop)` avec un générateur asynchrone de blocs PCM, un callback synchrone recevant des objets `Transcript` (`text`, `is_final`, `utterance_id`, `language`) et, éventuellement, un `asyncio.Event` pour l'arrêt propre. Les sources audio sont dans `brainy/stt/audio.py` ; la CLI est dans `brainy/stt/__main__.py`. Lancez les tests hors ligne avec `python -m unittest discover -s tests -v`.*
 
+## Web agent (H Company)
+> *Agent web (H Company)*
+
+The standalone text harness implements Brainy's Act step: Playwright captures the page, Holo chooses one action, and Brainy executes it before taking another screenshot. Install the pinned requirements (Python 3.10+) and Chromium, then set `H_API_KEY` in your environment or local `.env`. `H_MODEL` defaults to `holo3-1-35b-a3b`; `--model holo4-35b-a3b` overrides it. Never commit keys.
+
+> *La CLI texte autonome implémente l'étape Agir : Playwright capture la page, Holo choisit une action, puis Brainy l'exécute avant une nouvelle capture. Installez les dépendances épinglées (Python 3.10+) et Chromium, puis renseignez `H_API_KEY` dans l'environnement ou le fichier local `.env`. `H_MODEL` vaut par défaut `holo3-1-35b-a3b` ; `--model holo4-35b-a3b` permet de le changer. Ne commitez jamais les clés.*
+
+```sh
+python -m pip install -r requirements.txt
+python -m playwright install chromium
+python -m brainy.agent "Fill Customer name with Test User, choose Large pizza size, then submit the order." --url https://httpbin.org/forms/post
+python -m brainy.agent "Describe the next step" --url https://example.org --headless
+```
+
+The browser is visible by default; `--headless` hides it and `--profile-dir PATH` optionally keeps a private browser profile. No microphone is used. The async `WebAgent.run()` iterator emits narration, user questions, confirmation requests, completion and safe errors; its `ask` callback collects replies. User questions request manual intervention: replies are not sent to the model. Runs stop after 25 decisions by default.
+
+> *Le navigateur est visible par défaut ; `--headless` le masque et `--profile-dir CHEMIN` conserve éventuellement un profil privé. Aucun microphone n'est utilisé. L'itérateur asynchrone `WebAgent.run()` émet narration, questions, confirmations, résultat et erreurs sans données sensibles ; le callback `ask` recueille les réponses. Les questions demandent une intervention manuelle : les réponses ne sont pas envoyées au modèle. Une exécution s'arrête après 25 décisions par défaut.*
+
+Before a model `confirm` action, or a click whose target/narration mentions payment, submission, ordering or booking (English/French keywords), Brainy asks for approval. Only an exact `yes` or `oui` (ignoring case/outer whitespace) allows that single click; any other answer skips it and stops the run. This keyword gate is a first-slice safeguard, not a guarantee that all irreversible actions are detected: supervise it and do not use real purchases or sensitive accounts yet. The next screenshot lets Holo verify results, including radio selections. Screenshots are sent to H Company; password inputs are masked, but other sensitive content may remain visible. Never supply credentials in goals or use pages exposing secrets. There is no credential-entry workflow yet.
+
+> *Avant une action `confirm`, ou un clic dont la cible/narration mentionne paiement, envoi, commande ou réservation (mots-clés français/anglais), Brainy demande l'accord. Seul `yes` ou `oui` exact (sans tenir compte de la casse et des espaces autour) autorise ce clic unique ; toute autre réponse l'annule et arrête l'exécution. Ce filtre est une première protection, pas une garantie de détection de toutes les actions irréversibles : surveillez l'agent et n'utilisez pas encore d'achats réels ni de comptes sensibles. La capture suivante permet à Holo de vérifier le résultat, notamment les boutons radio. Les captures sont envoyées à H Company ; les champs de mot de passe sont masqués, mais d'autres données sensibles peuvent rester visibles. Ne fournissez jamais d'identifiants dans les objectifs et n'utilisez pas de pages exposant des secrets. La saisie sécurisée d'identifiants n'est pas encore implémentée.*
+
 ## Status
 > *État du projet*
 
-Hackathon project, early stage. The standalone Gladia speech-to-text CLI is implemented; the rest of the assistant described above remains a project vision.
+Hackathon project, early stage. Standalone Gladia speech-to-text and H Company web-agent text CLIs are implemented; their voice integration and the rest of the assistant remain a project vision.
 
-> *Projet de hackathon, à un stade précoce. La CLI autonome de transcription Gladia est implémentée ; le reste de l'assistant décrit ci-dessus reste une vision du projet.*
+> *Projet de hackathon, à un stade précoce. Les CLI autonomes de transcription Gladia et d'agent web H Company sont implémentées ; leur intégration vocale et le reste de l'assistant restent une vision du projet.*
