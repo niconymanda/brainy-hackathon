@@ -4,7 +4,7 @@ Tout le contexte du front est ici. On ne code pas tant que la checklist n'est pa
 
 | # | Sujet | Fichier | Statut |
 |---|-------|---------|--------|
-| 1 | Personnage et animation (photo, références) | [`01-personnage-animation.md`](01-personnage-animation.md) + `assets/` | À remplir |
+| 1 | Personnage et animation (photo, références) | [`01-personnage-animation.md`](01-personnage-animation.md) + `assets/` | Reçu, questions ouvertes |
 | 2 | Déroulé à l'écran, étape par étape | [`02-deroule-ecran.md`](02-deroule-ecran.md) | À remplir |
 | 3 | Contenu de la page (overlay seul ? autres écrans ?) | [`03-page.md`](03-page.md) | À remplir |
 | 4 | Style (couleurs, ambiance, références) | [`04-style.md`](04-style.md) | À remplir |
