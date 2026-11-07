@@ -9,7 +9,7 @@ import wave
 
 from dotenv import load_dotenv
 
-from brainy.h_task import build_h_prompt, run_h_task
+from brainy.h_task import build_h_prompt, run_h_task_async
 
 from .audio import microphone_audio, wav_audio
 from .client import GladiaClient, validate_duration
@@ -96,7 +96,26 @@ async def run(args):
             raise ValueError("No summary or final transcript available; nothing to send to H.")
         print(f"H prompt:\n{build_h_prompt(summary, transcript)}", flush=True)
         if not args.dry_run:
-            answer = await asyncio.to_thread(run_h_task, summary, transcript)
+            cancelling_h = False
+
+            def cancel_h():
+                nonlocal cancelling_h
+                if not cancelling_h:
+                    cancelling_h = True
+                    print("Cancelling the H task…", file=sys.stderr, flush=True)
+                    task.cancel()
+
+            previous = signal.signal(signal.SIGINT, lambda *_: loop.call_soon_threadsafe(cancel_h))
+            try:
+                answer = await run_h_task_async(
+                    summary, transcript, timeout_seconds=getattr(args, "h_timeout", 600),
+                )
+            except asyncio.CancelledError:
+                if not cancelling_h:
+                    raise
+                return 130
+            finally:
+                signal.signal(signal.SIGINT, previous)
             print(f"H answer:\n{answer}", flush=True)
 
 
@@ -120,6 +139,8 @@ def main():
                         help="Send the summary and final transcript to H (enables bullet-point summarization).")
     parser.add_argument("--dry-run", action="store_true",
                         help="With --send-to-h, print the prompt without calling H (Gladia still runs).")
+    parser.add_argument("--h-timeout", type=duration_type(0.01, 86400), default=600, metavar="SECONDS",
+                        help="Maximum H task duration (default: 600 seconds); Ctrl+C cancels the H session.")
     parser.add_argument("--endpointing", type=duration_type(0.01, 10), metavar="SECONDS",
                         help="Silence ending an utterance: 0.01–10 seconds (API default: 0.05).")
     parser.add_argument("--max-utterance", type=duration_type(5, 60), metavar="SECONDS",
