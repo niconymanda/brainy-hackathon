@@ -87,9 +87,13 @@ class ClientTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(call.kwargs["json"]["language_config"], {
             "languages": [], "code_switching": False,
         })
-        for key in ("post_processing", "endpointing", "maximum_duration_without_endpointing"):
-            self.assertNotIn(key, call.kwargs["json"])
+        self.assertEqual(call.kwargs["json"]["post_processing"]["summarization_config"], {"type": "bullet_points"})
+        self.assertEqual(call.kwargs["json"]["maximum_duration_without_endpointing"], 9)
+        self.assertNotIn("endpointing", call.kwargs["json"])
         self.assertNotIn("receive_post_processing_events", call.kwargs["json"]["messages_config"])
+
+    def test_default_language_is_french(self):
+        self.assertEqual(GladiaClient("test-key").languages, ["fr"])
 
     async def test_summary_after_stop(self):
         for summary_type in ("general", "bullet_points", "concise"):

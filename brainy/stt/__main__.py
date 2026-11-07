@@ -46,7 +46,7 @@ def build_h_prompt_from_results(final_utterances, summaries):
 async def run(args):
     h_prompt = getattr(args, "h_prompt", False)
     client = GladiaClient(
-        os.getenv("GLADIA_API_KEY", ""), args.language or (),
+        os.getenv("GLADIA_API_KEY", ""), args.language or ("fr",),
         summary_type=args.summary or ("bullet_points" if h_prompt else None), endpointing=args.endpointing,
         maximum_duration_without_endpointing=args.max_utterance,
     )
@@ -113,7 +113,7 @@ def duration_type(minimum, maximum):
 def main():
     parser = argparse.ArgumentParser(description="Stream microphone or WAV audio to Gladia live STT.")
     parser.add_argument("--language", action="append", metavar="CODE",
-                        help="ISO language code; repeat for code switching (e.g. fr and en). Default: auto-detect.")
+                        help="ISO language code; repeat for code switching (e.g. fr and en). Default: fr.")
     parser.add_argument("--list-devices", action="store_true", help="List audio devices without an API key.")
     parser.add_argument("--summary", choices=("general", "bullet_points", "concise"),
                         help="Print a post-session summary (default: disabled).")

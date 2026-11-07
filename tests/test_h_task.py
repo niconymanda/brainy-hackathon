@@ -13,13 +13,13 @@ class PromptTests(unittest.TestCase):
     def test_summary_and_transcript(self):
         prompt = build_h_prompt("  Book a train  ", "  Paris to Lyon {tomorrow}  ")
         self.assertIn("\n\nBook a train\n\n", prompt)
-        self.assertIn("Here is what they said, word for word:\n\nParis to Lyon {tomorrow}", prompt)
+        self.assertNotIn("Paris to Lyon", prompt)
         self.assertIn("Only when the user has given his ok, can you go ahead with the action.", prompt)
         self.assertIn("{summary}", H_PROMPT_TEMPLATE)
 
     def test_empty_transcript(self):
         for transcript in ("", " \n "):
-            self.assertIn("(not available)", build_h_prompt("Task", transcript))
+            self.assertEqual(build_h_prompt("Task", transcript), build_h_prompt("Task"))
 
     def test_latest_usable_summary(self):
         summaries = [Summary(results="Old"), Summary(results="Latest"),
