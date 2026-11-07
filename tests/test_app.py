@@ -3,6 +3,7 @@ import asyncio
 import json
 import tempfile
 import unittest
+from datetime import datetime
 from pathlib import Path
 from unittest.mock import patch
 
@@ -161,6 +162,18 @@ class AppTests(unittest.IsolatedAsyncioTestCase):
                 events = await self.recv_until(ws, "needs_user")
         self.assertEqual(events[-1]["question"], "Est-ce que je continue ou pas ?")
 
+    async def test_open_answer_starting_with_non_continues(self):
+        script = [Action("ask_user", text="Quel jour ?"), Action("done", text="Fini.")]
+        with patch.object(FakeHolo, "script", script):
+            async with connect("ws://127.0.0.1:8799/ws") as ws:
+                await ws.recv()
+                await ws.send(json.dumps({"type": "user_text", "text": "Un dermato"}))
+                await self.recv_until(ws, "needs_user")
+                await ws.send(json.dumps({"type": "user_text", "text": "Non, plutôt lundi à 13h"}))
+                events = await self.recv_until(ws, "done")
+        self.assertTrue(events[-1]["ok"])
+        self.assertIn("User answered: Non, plutôt lundi à 13h", FakeHolo.history)
+
     async def test_refused_confirmation_clicks_nothing(self):
         async with connect("ws://127.0.0.1:8799/ws") as ws:
             await ws.recv()
@@ -203,6 +216,13 @@ class HelperTests(unittest.TestCase):
     def test_start_url(self):
         self.assertEqual(app_module.start_url_for("Prends-moi un RDV sur Doctolib"), "https://www.doctolib.fr")
         self.assertIsNone(app_module.start_url_for("Réserve un restaurant"))
+
+    def test_goal_carries_request_and_date(self):
+        goal = app_module.brainy_goal("Un dermato mardi vers 13h", datetime(2026, 11, 7))
+        self.assertIn("Un dermato mardi vers 13h", goal)
+        self.assertIn("Today is samedi 7 novembre 2026", goal)
+        self.assertIn("never use done to ask", goal)
+        self.assertNotIn("list the questions", goal)
 
     def test_obvious_questions(self):
         for q in ("Est-ce que tu veux bien que je prenne le rendez-vous pour toi ?",

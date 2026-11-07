@@ -47,6 +47,7 @@ class WebAgent:
         unchanged_count = 0
         step = "navigate"
         budget_steps, budget_start, nudged_at = 0, time.monotonic(), None
+        answered, facts = {}, []
         try:
             await self.browser.start_run()
             if start_url:
@@ -75,24 +76,32 @@ class WebAgent:
                     nudged_at = budget_steps
                 budget_steps += 1
                 step = "model call"
-                action = await self.client.decide(screenshot, goal, history, page_context=page_context)
+                known = ("\nThe user already answered (settled, never ask again):\n- " + "\n- ".join(facts)) if facts else ""
+                action = await self.client.decide(screenshot, goal + known, history, page_context=page_context)
                 key = (action.action, " ".join(action.target.casefold().split()))
                 yield AgentStep(action.narration, action.action)
-                if action.action == "done":
-                    yield Done(action.text or action.narration)
-                    return
                 question = None
+                if action.action == "done":
+                    result = action.text or action.narration
+                    if not result.rstrip().endswith("?"):
+                        yield Done(result)
+                        return
+                    question = result
                 if key == last_key and unchanged_count >= 2:
                     question = (f"I'm stuck: repeating '{action.target}' has no visible effect. "
                                 "Should I try a different approach, or can you do it manually and reply ok?")
                 elif action.action == "ask_user":
                     question = action.text or action.narration
-                elif nudged_at is not None and budget_steps - nudged_at > self.wrap_up_grace:
+                elif question is None and nudged_at is not None and budget_steps - nudged_at > self.wrap_up_grace:
                     question = OUT_OF_BUDGET
                 if question is not None:
-                    yield NeedsUser(question, after_budget=nudged_at is not None)
-                    step = "user answer"
-                    answer = await self.ask(question)
+                    norm = " ".join(question.casefold().split())
+                    if norm in answered:
+                        answer = answered[norm]
+                    else:
+                        yield NeedsUser(question, after_budget=nudged_at is not None)
+                        step = "user answer"
+                        answer = await self.ask(question)
                     if answer.strip().casefold() in {"stop", "non", "no"}:
                         yield Done("Stopped at your request.")
                         return
@@ -100,6 +109,9 @@ class WebAgent:
                         history.append("User has completed the requested manual step; inspect the screenshot.")
                     else:
                         history.append("User answered: " + answer)
+                        if action.action in {"ask_user", "done"}:
+                            answered[norm] = answer
+                            facts.append(f"{question} -> {answer}")
                     last_key = None
                     unchanged_count = 0
                     budget_steps, budget_start, nudged_at = 0, time.monotonic(), None

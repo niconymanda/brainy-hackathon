@@ -27,7 +27,6 @@ from brainy.agent.browser import Browser
 from brainy.agent.events import AgentError, AgentStep, ConfirmRequest, Done, NeedsUser
 from brainy.agent.holo import HoloClient
 from brainy.agent.loop import OUT_OF_BUDGET, SECRET_QUESTION, WebAgent
-from brainy.h_task import build_h_prompt
 
 DIST = Path(__file__).resolve().parents[1] / "frontend" / "dist"
 HOME = Path(os.getenv("BRAINY_HOME", Path.home() / ".brainy"))
@@ -43,6 +42,9 @@ SITES = {
 }
 YES = re.compile(r"^\W*(oui|yes|ouais|vas-y|go|ok|okay|d'accord|parfait|c'est bon|confirme)\b", re.I)
 NO = re.compile(r"^\W*(non|no|stop|arr[êe]t\w*|annule|on s['’]arr[êe]te|laisse tomber)\b", re.I)
+DAYS = ("lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche")
+MONTHS = ("janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août", "septembre", "octobre",
+          "novembre", "décembre")
 FRENCH = ("\nLanguage: write every narration and question in French, as one short spoken sentence "
           "addressed to the user (tutoiement).")
 AUTONOMY = ("\nAutonomy: the user is delegating and does not want to be interrupted. The browser is signed in to "
@@ -83,6 +85,17 @@ def obvious_question(question):
     """Yes/no check-ins the agent should settle itself; open questions, secrets and the budget check go to the user."""
     return (bool(OBVIOUS.search(question)) and not OPEN_QUESTION.search(question)
             and not SECRET_QUESTION.search(question) and question != french_question(OUT_OF_BUDGET))
+
+
+def brainy_goal(request, now=None):
+    now = now or datetime.now()
+    today = f"{DAYS[now.weekday()]} {now.day} {MONTHS[now.month - 1]} {now.year}"
+    return (f"The user asked (spoken and transcribed, may contain small transcription errors):\n{request}\n\n"
+            f"Today is {today}. Resolve relative dates yourself (e.g. 'mardi' = the next Tuesday, 'tous les "
+            "mardis' = any Tuesday). Everything stated in the request is settled: never ask about it again. Times "
+            "like 'vers 13h' or 'l'après-midi' are preferences: pick the closest available slot. If a required "
+            "detail is truly missing, use ask_user; never use done to ask a question. Use done only when the task "
+            "is complete or impossible, with a short summary of what was done.")
 
 
 def site_tips(text):
@@ -168,6 +181,7 @@ class Session:
         self.stop = None
         self.answer = None
         self.auto_reply = None
+        self.confirming = False
 
     def emit(self, **event):
         self.outbox.put_nowait(event)
@@ -262,7 +276,10 @@ class Session:
             self.emit(type="error", reason="Je n'ai rien entendu.", suggestion="Appuie sur H et parle-moi.")
             return
         if self.answer and not self.answer.done():
-            self.reply("oui" if YES.search(text) else "non" if NO.search(text) else text)
+            # An open answer like "non, plutôt lundi à 13h" is passed on as is, not read as "stop".
+            if self.confirming or len(text.split()) <= 3:
+                text = "oui" if YES.search(text) else "non" if NO.search(text) else text
+            self.reply(text)
             return
         if self.app.agent_task and not self.app.agent_task.done():
             self.emit(type="say", text="Je suis encore sur la demande précédente.")
@@ -287,7 +304,7 @@ class Session:
             key = os.getenv("H_API_KEY") or os.getenv("HCOMPANY_API_KEY", "")
             client = HoloClient(key, self.app.args.model)
             browser = await self.app.get_browser()
-            goal = build_h_prompt(request, request) + FRENCH + AUTONOMY + BUDGET + site_tips(request)
+            goal = brainy_goal(request) + FRENCH + AUTONOMY + BUDGET + site_tips(request)
             args = self.app.args
             agent = WebAgent(client, browser, self.ask, max_steps=args.max_steps,
                              wrap_up_steps=getattr(args, "search_steps", None),
@@ -298,6 +315,7 @@ class Session:
                     if event.action not in {"done", "ask_user", "confirm"}:
                         self.emit(type="agent_step", narration=event.narration or "Je continue.", action=event.action)
                 elif isinstance(event, NeedsUser):
+                    self.confirming = False
                     question = french_question(event.question)
                     if not event.after_budget and obvious_question(question):
                         self.auto_reply = AUTO_REPLY
@@ -306,6 +324,7 @@ class Session:
                     else:
                         self.emit(type="needs_user", question=question)
                 elif isinstance(event, ConfirmRequest):
+                    self.confirming = True
                     self.emit(type="confirm_request", summary=event.summary)
                 elif isinstance(event, Done):
                     ok, result = french_done(event.result)

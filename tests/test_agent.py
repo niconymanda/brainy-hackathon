@@ -131,6 +131,33 @@ class AgentTests(unittest.IsolatedAsyncioTestCase):
             wrap_up_steps=1, wrap_up_grace=5)
         self.assertEqual([e.after_budget for e in events if isinstance(e, NeedsUser)], [True])
 
+    async def run_goals(self, actions, max_steps=20):
+        self.browser.screenshot.side_effect = (bytes([i]) for i in range(100))
+        goals, queue = [], list(actions)
+        async def decide(screenshot, goal, history, page_context=None):
+            goals.append(goal)
+            return queue.pop(0)
+        self.client.decide.side_effect = decide
+        agent = WebAgent(self.client, self.browser, self.ask, max_steps=max_steps)
+        return [event async for event in agent.run("test")], goals
+
+    async def test_done_with_question_asks_instead_of_ending(self):
+        self.ask.return_value = "Mardi à 13h"
+        events, _ = await self.run_goals([Action("done", text="Quel jour et à quelle heure ?"),
+                                          Action("done", text="Réservé.")])
+        self.assertEqual([e.question for e in events if isinstance(e, NeedsUser)], ["Quel jour et à quelle heure ?"])
+        self.assertEqual(events[-1], Done("Réservé."))
+
+    async def test_answers_stay_in_goal_and_are_not_asked_twice(self):
+        self.ask.return_value = "Mardi à 13h"
+        events, goals = await self.run_goals([Action("ask_user", text="Quel jour ?")]
+                                             + [Action("scroll", text="down")] * 10
+                                             + [Action("ask_user", text="Quel  jour ?"), Action("done", text="ok")])
+        self.ask.assert_awaited_once()
+        self.assertNotIn("Mardi", goals[0])
+        self.assertIn("Quel jour ? -> Mardi à 13h", goals[-1])
+        self.assertEqual(events[-1], Done("ok"))
+
     async def test_search_budget_resets_after_answer(self):
         self.ask.return_value = "continue"
         events, histories = await self.run_budget(
