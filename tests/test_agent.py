@@ -37,6 +37,11 @@ class ParsingTests(unittest.TestCase):
             with self.subTest(content=content), self.assertRaises(ValueError):
                 parse_action(content)
 
+    def test_select_text_requires_label(self):
+        self.assertEqual(parse_action('{"action":"select_text","text":"Guizmo Coco"}').text, "Guizmo Coco")
+        with self.assertRaises(ValueError):
+            parse_action('{"action":"select_text","text":" "}')
+
 
 class AgentTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
@@ -135,6 +140,43 @@ class AgentTests(unittest.IsolatedAsyncioTestCase):
     async def test_page_context_forwarded_to_decide(self):
         await self.collect([Action("done")])
         self.assertEqual(self.client.decide.call_args.kwargs["page_context"], self.browser.page_context.return_value)
+
+    async def test_select_text_state_in_history(self):
+        self.browser.select_text.return_value = "Selected 'Guizmo Coco': aria-checked=true"
+        await self.collect([Action("select_text", text="Guizmo Coco"), Action("done")])
+        self.browser.select_text.assert_awaited_once_with("Guizmo Coco")
+        self.client.locate.assert_not_awaited()
+        self.assertIn("aria-checked=true", str(self.client.decide.call_args.args[2]))
+
+    async def test_select_text_grounding_fallback(self):
+        self.browser.select_text.return_value = None
+        self.browser.screenshot.side_effect = [b"before", b"after"]
+        await self.collect([Action("select_text", text="Guizmo Coco"), Action("done")])
+        self.client.locate.assert_awaited_once_with(b"before", "Guizmo Coco", (1280, 900))
+        self.browser.click.assert_awaited_once_with(100, 200)
+        self.assertIn("page changed", str(self.client.decide.call_args.args[2]))
+
+    async def test_select_text_confirm_gate(self):
+        for answer in ("non", "oui"):
+            with self.subTest(answer=answer):
+                self.setUp()
+                self.ask.return_value = answer
+                self.browser.select_text.return_value = "Selected 'Pay': clicked"
+                events = await self.collect([Action("select_text", text="Pay"), Action("done")])
+                self.assertTrue(any(isinstance(e, ConfirmRequest) for e in events))
+                if answer == "oui":
+                    self.browser.select_text.assert_awaited_once_with("Pay")
+                else:
+                    self.browser.select_text.assert_not_awaited()
+
+    async def test_select_text_repeat_key_uses_label(self):
+        self.browser.select_text.return_value = "Selected: no exposed state"
+        events = await self.collect([Action("select_text", text="Guizmo Coco"),
+                                     Action("select_text", text=" Marie Coco "),
+                                     Action("select_text", text="MARIE COCO"),
+                                     Action("select_text", text="Marie Coco")])
+        self.assertEqual(self.browser.select_text.await_count, 3)
+        self.assertTrue(any(isinstance(e, NeedsUser) for e in events))
 
     async def test_empty_budget(self):
         events = await self.collect([], max_steps=0)
@@ -296,6 +338,90 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         page = MagicMock()
         page.is_closed.return_value = False
         return page
+
+    async def test_select_text_resolution_order_across_frames(self):
+        browser = Browser()
+        browser.page = self.page_mock()
+        main, child = MagicMock(), MagicMock()
+        browser.page.frames = [main, child]
+        calls = []
+
+        async def resolve(matches, text):
+            calls.append(matches)
+            return None
+
+        browser._select_first_visible = AsyncMock(side_effect=resolve)
+        self.assertIsNone(await browser.select_text("Guizmo Coco"))
+        expected = []
+        for role in ("radio", "option", "checkbox", "button", "link", "menuitem", "tab"):
+            for frame in (main, child):
+                call = frame.get_by_role.call_args_list[len(expected) // 2]
+                self.assertEqual(call.args[0], role)
+                pattern = call.kwargs["name"]
+                self.assertIsNotNone(pattern.search("Patient GUIZMO COCO"))
+                expected.append(frame.get_by_role.return_value)
+        expected.extend([main.get_by_label.return_value, child.get_by_label.return_value,
+                         main.get_by_text.return_value, child.get_by_text.return_value])
+        self.assertEqual(calls, expected)
+
+    async def test_select_text_stops_at_first_role_match(self):
+        browser = Browser()
+        browser.page = self.page_mock()
+        frame = MagicMock()
+        browser.page.frames = [frame]
+        browser._select_first_visible = AsyncMock(return_value="Selected: checked=true")
+        self.assertEqual(await browser.select_text("Guizmo Coco"), "Selected: checked=true")
+        self.assertEqual(frame.get_by_role.call_args.args[0], "radio")
+        frame.get_by_label.assert_not_called()
+        frame.get_by_text.assert_not_called()
+
+    async def test_select_first_visible_checks_radio_and_reports_state(self):
+        browser = Browser()
+        browser._wait_for_page = AsyncMock()
+        matches = MagicMock()
+        matches.count = AsyncMock(return_value=2)
+        hidden, visible = MagicMock(), MagicMock()
+        matches.nth.side_effect = [hidden, visible]
+        hidden.evaluate = AsyncMock(return_value={"tag": "DIV", "role": "radio"})
+        hidden.is_visible = AsyncMock(return_value=False)
+        visible.evaluate = AsyncMock(side_effect=[{"tag": "DIV", "role": "radio"}, {"aria-checked": "true"}])
+        visible.is_visible = AsyncMock(return_value=True)
+        visible.scroll_into_view_if_needed = AsyncMock()
+        visible.check = AsyncMock()
+        result = await browser._select_first_visible(matches, "Guizmo Coco")
+        self.assertIn("aria-checked=true", result)
+        visible.check.assert_awaited_once()
+        visible.scroll_into_view_if_needed.assert_awaited_once()
+        hidden.click.assert_not_called()
+
+    async def test_native_option_uses_select_option(self):
+        browser = Browser()
+        browser._wait_for_page = AsyncMock()
+        matches = MagicMock()
+        matches.count = AsyncMock(return_value=1)
+        option = matches.nth.return_value
+        option.evaluate = AsyncMock(side_effect=[{"tag": "OPTION"}, "Guizmo Coco", {"selected": True}])
+        select = option.locator.return_value
+        select.is_visible = AsyncMock(return_value=True)
+        select.scroll_into_view_if_needed = AsyncMock()
+        select.select_option = AsyncMock()
+        result = await browser._select_first_visible(matches, "Guizmo")
+        select.select_option.assert_awaited_once_with(label="Guizmo Coco")
+        self.assertIn("selected=true", result)
+
+    async def test_button_click_and_state_readback_navigation_error(self):
+        browser = Browser()
+        browser._wait_for_page = AsyncMock()
+        matches = MagicMock()
+        matches.count = AsyncMock(return_value=1)
+        button = matches.nth.return_value
+        button.evaluate = AsyncMock(side_effect=[{"tag": "BUTTON"}, Error("Navigated")])
+        button.is_visible = AsyncMock(return_value=True)
+        button.scroll_into_view_if_needed = AsyncMock()
+        button.click = AsyncMock()
+        result = await browser._select_first_visible(matches, "Continue")
+        button.click.assert_awaited_once()
+        self.assertIn("inspect next screenshot", result)
 
     async def test_page_context_uses_truncated_body_text_not_input_values(self):
         browser = Browser()

@@ -24,7 +24,7 @@ def parse_action(content):
             continue
         if not isinstance(value, dict):
             continue
-        if value.get("action") not in {"navigate", "click", "type", "scroll", "ask_user", "confirm", "done"}:
+        if value.get("action") not in {"navigate", "click", "select_text", "type", "scroll", "ask_user", "confirm", "done"}:
             continue
         fields = {key: value.get(key, "") for key in ("action", "target", "text", "url", "narration")}
         if not all(isinstance(v, str) for v in fields.values()):
@@ -32,6 +32,8 @@ def parse_action(content):
         action = Action(**fields)
         if action.action in {"click", "type", "confirm"} and not action.target.strip():
             raise ValueError("Action needs an element description")
+        if action.action == "select_text" and not action.text.strip():
+            raise ValueError("select_text needs a visible label")
         return action
     raise ValueError("No valid action JSON")
 
@@ -73,11 +75,14 @@ class HoloClient:
     async def decide(self, screenshot, goal, history, page_context=None):
         prompt = (
             "You choose ONE next GUI action; Brainy executes it. Return JSON only with fields "
-            "action (navigate|click|type|scroll|ask_user|confirm|done), target (precise visible element "
+            "action (navigate|click|select_text|type|scroll|ask_user|confirm|done), target (precise visible element "
             "description), text, url, narration (one short spoken sentence in the user's language). "
             'Every click/type/confirm MUST include a nonempty target describing the element. Example: '
             '{"action":"type","target":"Customer name input","text":"Test User",'
             '"url":"","narration":"Entering the name."}. '
+            "Prefer select_text whenever the goal names a specific option, person, slot time or choice "
+            "whose label is visible. Put the exact visible label in text; Brainy resolves it through the DOM "
+            "and checks selection state. Use coordinate click for unlabeled targets. "
             "type replaces the target field text. scroll text is up or down. confirm means click the "
             "target after explicit user approval; use it for irreversible actions. done only when the "
             "screenshot shows success. Verify selected radio buttons and field values before proceeding. "

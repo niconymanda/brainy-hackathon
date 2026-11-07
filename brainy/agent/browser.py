@@ -1,4 +1,5 @@
 import asyncio
+import re
 from urllib.parse import urlsplit
 
 from playwright.async_api import Error, async_playwright
@@ -188,6 +189,60 @@ class Browser:
             if (el.type === 'password') return '[redacted]';
             return el.isContentEditable ? el.textContent : (el.value || '');
         }""")
+
+    async def select_text(self, text):
+        page = await self.ensure_page()
+        name = re.compile(re.escape(text), re.I)
+        frames = page.frames
+        for role in ("radio", "option", "checkbox", "button", "link", "menuitem", "tab"):
+            for frame in frames:
+                matches = frame.get_by_role(role, name=name, include_hidden=role == "option")
+                result = await self._select_first_visible(matches, text)
+                if result is not None:
+                    return result
+        for method in ("get_by_label", "get_by_text"):
+            for frame in frames:
+                result = await self._select_first_visible(getattr(frame, method)(name), text)
+                if result is not None:
+                    return result
+        return None
+
+    async def _select_first_visible(self, matches, text):
+        for index in range(await matches.count()):
+            element = matches.nth(index)
+            kind = await element.evaluate("el => ({tag: el.tagName, type: el.type, role: el.getAttribute('role')})")
+            if kind["tag"] == "OPTION":
+                select = element.locator("xpath=ancestor::select[1]")
+                if not await select.is_visible():
+                    continue
+                await select.scroll_into_view_if_needed()
+                await select.select_option(label=await element.evaluate("el => el.label"))
+            else:
+                if not await element.is_visible():
+                    continue
+                await element.scroll_into_view_if_needed()
+                if kind.get("type") in {"radio", "checkbox"} or kind.get("role") in {"radio", "checkbox"}:
+                    await element.check()
+                elif kind["tag"] == "SELECT":
+                    await element.select_option(label=text)
+                else:
+                    await element.click()
+            await self._wait_for_page()
+            try:
+                state = await element.evaluate("""el => {
+                    const control = el.control || el.querySelector('input[type="radio"], input[type="checkbox"]') || el;
+                    const state = {};
+                    if (typeof control.checked === 'boolean') state.checked = control.checked;
+                    for (const attr of ['aria-checked', 'aria-selected']) {
+                        if (control.hasAttribute(attr)) state[attr] = control.getAttribute(attr);
+                    }
+                    if (control.tagName === 'OPTION') state.selected = control.selected;
+                    return state;
+                }""")
+            except Error:
+                state = {}
+            details = ", ".join(f"{key}={str(value).lower()}" for key, value in state.items())
+            return f"Selected {text!r}: " + (details or "clicked; inspect next screenshot for page change")
 
     async def press(self, key):
         await self.page.keyboard.press(key)

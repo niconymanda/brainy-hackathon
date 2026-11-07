@@ -42,20 +42,24 @@ class WebAgent:
                         unchanged_count = 0
                     last_key = key
                     pending = None
+                    if key[0] == "select_text":
+                        history.append(f"select_text on '{target}': " +
+                                       ("page changed" if before != signature else "no visible page change"))
                     if unchanged_count >= 2:
                         history.append(f"Your last {key[0]} on '{target}' had no visible effect; do not repeat it, "
                                        "try a different approach (e.g. results may already be shown, scroll, "
                                        "choose a suggestion first, or ask the user).")
                 step = "model call"
                 action = await self.client.decide(screenshot, goal, history, page_context=page_context)
-                key = (action.action, " ".join(action.target.casefold().split()))
+                target = action.text if action.action == "select_text" else action.target
+                key = (action.action, " ".join(target.casefold().split()))
                 yield AgentStep(action.narration, action.action)
                 if action.action == "done":
                     yield Done(action.text or action.narration)
                     return
                 question = None
                 if key == last_key and unchanged_count >= 2:
-                    question = (f"I'm stuck: repeating '{action.target}' has no visible effect. "
+                    question = (f"I'm stuck: repeating '{target}' has no visible effect. "
                                 "Should I try a different approach, or can you do it manually and reply ok?")
                 elif action.action == "ask_user":
                     question = action.text or action.narration
@@ -74,9 +78,9 @@ class WebAgent:
                     unchanged_count = 0
                     continue
                 if action.action == "confirm" or (
-                    action.action == "click" and RISKY.search(action.target + " " + action.narration)
+                    action.action in {"click", "select_text"} and RISKY.search(target + " " + action.narration)
                 ):
-                    summary = action.narration or action.target
+                    summary = action.narration or target
                     question = summary + " Proceed? (yes/oui or no/non)"
                     yield ConfirmRequest(summary)
                     step = "confirmation"
@@ -86,6 +90,16 @@ class WebAgent:
                 if action.action == "navigate":
                     step = "navigate"
                     await self.browser.goto(action.url)
+                elif action.action == "select_text":
+                    step = "select_text"
+                    result = await self.browser.select_text(action.text)
+                    if result is None:
+                        step = "model call"
+                        x, y = await self.client.locate(screenshot, action.text, self.browser.viewport)
+                        step = "click"
+                        await self.browser.click(x, y)
+                        result = f"Clicked {action.text!r} using grounding; inspect next screenshot for selection state."
+                    history.append(result)
                 elif action.action in {"click", "confirm", "type"}:
                     step = "model call"
                     x, y = await self.client.locate(screenshot, action.target, self.browser.viewport)
@@ -112,9 +126,9 @@ class WebAgent:
                 elif action.action == "scroll":
                     step = "scroll"
                     await self.browser.scroll(action.text)
-                history.append({"action": action.action, "target": action.target,
+                history.append({"action": action.action, "target": target,
                                 "result": "executed; inspect current screenshot to verify"})
-                pending = (key, signature, action.target)
+                pending = (key, signature, target)
             yield AgentError("The step limit was reached.", "Try a smaller task or continue manually.")
         except Exception as exc:
             if self.debug:
