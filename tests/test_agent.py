@@ -91,11 +91,37 @@ class AgentTests(unittest.IsolatedAsyncioTestCase):
     async def test_type_and_user_manual_step(self):
         self.ask.return_value = "private answer"
         events = await self.collect([Action("type", target="Name", text="Test User"),
-                                     Action("ask_user", text="Complete the manual step"), Action("done")])
+                                     Action("ask_user", text="Enter your password manually"), Action("done")])
         self.browser.type.assert_awaited_once_with("Test User")
         self.browser.press.assert_awaited_once_with("ControlOrMeta+A")
         self.assertTrue(any(isinstance(e, NeedsUser) for e in events))
         self.assertNotIn("private answer", str(self.client.decide.call_args))
+
+    async def test_follow_up_answer_forwarded(self):
+        for answer in ("8:10", ""):
+            with self.subTest(answer=answer):
+                self.ask.return_value = answer
+                await self.collect([Action("ask_user", text="Which train: 7:04 or 8:10?"), Action("done")])
+                self.assertIn("User answered: " + answer, self.client.decide.call_args.args[2])
+
+    async def test_secret_answers_not_forwarded(self):
+        for question in ("Password?", "Votre mot de passe ?", "Card number?", "Numéro de carte ?",
+                         "CVV?", "CVC?", "Security code?", "PIN?", "IBAN?", "OTP?", "SMS code?"):
+            with self.subTest(question=question):
+                self.ask.return_value = "sensitive answer"
+                await self.collect([Action("ask_user", text=question), Action("done")])
+                history = self.client.decide.call_args.args[2]
+                self.assertEqual(history, ["User has completed the requested manual step; inspect the screenshot."])
+                self.assertNotIn("sensitive answer", str(history))
+
+    async def test_follow_up_stop_answers(self):
+        for answer in ("stop", "non", "no", " NO "):
+            with self.subTest(answer=answer):
+                self.ask.return_value = answer
+                self.client.decide.reset_mock()
+                events = await self.collect([Action("ask_user", text="Which train?"), Action("done")])
+                self.assertEqual(events[-1], Done("Stopped at your request."))
+                self.assertEqual(self.client.decide.await_count, 1)
 
 
 class HTTPTests(unittest.IsolatedAsyncioTestCase):

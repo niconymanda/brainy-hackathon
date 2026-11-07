@@ -4,6 +4,7 @@ from .events import AgentError, AgentStep, ConfirmRequest, Done, NeedsUser
 
 
 RISKY = re.compile(r"pay|payer|submit|envoyer|valider|book|réserver|confirm|acheter|order|commander", re.I)
+SECRET_QUESTION = re.compile(r"\b(?:password|mot\s+de\s+passe|card|carte|cvv|cvc|code|pin|iban|otp|sms)\b", re.I)
 
 
 class WebAgent:
@@ -29,11 +30,13 @@ class WebAgent:
                     question = action.text or action.narration
                     yield NeedsUser(question)
                     answer = await self.ask(question)
-                    # Answers can contain secrets: never send them back to the model.
                     if answer.strip().casefold() in {"stop", "non", "no"}:
                         yield Done("Stopped at your request.")
                         return
-                    history.append("User has completed the requested manual step; inspect the screenshot.")
+                    if SECRET_QUESTION.search(question):
+                        history.append("User has completed the requested manual step; inspect the screenshot.")
+                    else:
+                        history.append("User answered: " + answer)
                     continue
                 if action.action == "confirm" or (
                     action.action == "click" and RISKY.search(action.target + " " + action.narration)
