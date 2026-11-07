@@ -88,6 +88,11 @@ class BrainyApp:
         self.browser = None
         self.history = load_history()
         self.agent_task = None
+        self.sessions = set()
+
+    def broadcast(self, **event):
+        for session in self.sessions:
+            session.emit(**event)
 
     async def get_browser(self):
         if self.browser is not None and not self.browser._context_closed:
@@ -128,6 +133,7 @@ class Session:
 
     async def run(self):
         pump = asyncio.create_task(self.pump())
+        self.app.sessions.add(self)
         self.emit(type="history", items=self.app.history)
         try:
             async for raw in self.ws:
@@ -138,6 +144,7 @@ class Session:
         except ConnectionClosed:
             pass
         finally:
+            self.app.sessions.discard(self)
             if self.stop:
                 self.stop.set()
             if self.answer and not self.answer.done():
@@ -279,8 +286,25 @@ def static_response(path):
     return Response(200, "OK", headers, body)
 
 
+def start_hotkey(combo, loop, app):
+    """Global shortcut (works when Brainy is in the background). macOS asks for Accessibility access."""
+    try:
+        from pynput import keyboard
+
+        def pressed():
+            loop.call_soon_threadsafe(lambda: app.broadcast(type="hotkey"))
+
+        listener = keyboard.GlobalHotKeys({combo: pressed})
+        listener.daemon = True
+        listener.start()
+    except Exception as exc:
+        print(f"Global hotkey disabled ({type(exc).__name__}); use H in the Brainy window.", file=sys.stderr)
+
+
 async def serve_app(args, ready):
     app = BrainyApp(args)
+    if getattr(args, "hotkey", ""):
+        start_hotkey(args.hotkey, asyncio.get_running_loop(), app)
 
     def process_request(connection, request):
         if request.path.split("?", 1)[0] == "/ws":
@@ -306,7 +330,10 @@ def main():
     parser.add_argument("--language", action="append", default=None, metavar="CODE",
                         help="Gladia language code, repeatable (default: fr).")
     parser.add_argument("--device", help="Microphone device index or name.")
-    parser.add_argument("--channel", default=os.getenv("BRAINY_BROWSER_CHANNEL", "chrome"),
+    parser.add_argument("--hotkey", default=os.getenv("BRAINY_HOTKEY", "<ctrl>+<alt>+h"),
+                        help="Global shortcut (pynput syntax); empty to disable.")
+    parser.add_argument("--channel", default=os.getenv("BRAINY_BROWSER_CHANNEL",
+                                                       "msedge" if sys.platform == "win32" else "chrome"),
                         help="Installed browser for the agent (chrome, msedge); falls back to bundled Chromium.")
     parser.add_argument("--model", default=os.getenv("H_MODEL") or "holo3-1-35b-a3b")
     parser.add_argument("--max-steps", type=int, default=40)

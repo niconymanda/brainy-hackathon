@@ -8,6 +8,7 @@ import type { HistoryItem } from '../types'
 
 export type ServerEvent =
   | { type: 'idle' }
+  | { type: 'hotkey' }
   | { type: 'listening' }
   | { type: 'transcript'; text: string; final: boolean }
   | { type: 'say'; text: string }

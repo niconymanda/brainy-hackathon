@@ -73,6 +73,7 @@ export function useLive(url: string, muted: boolean) {
   const ws = useRef<WebSocket | null>(null)
   const mutedRef = useRef(muted)
   const uiRef = useRef(ui)
+  const nextRef = useRef(() => {})
 
   useEffect(() => {
     mutedRef.current = muted
@@ -88,6 +89,7 @@ export function useLive(url: string, muted: boolean) {
       sock.onmessage = (m) => {
         const e = JSON.parse(m.data) as ServerEvent
         if (e.type === 'history') return setHistory(e.items)
+        if (e.type === 'hotkey') return nextRef.current()
         dispatch(e)
         const text = spokenText(e)
         if (text) {
@@ -121,6 +123,10 @@ export function useLive(url: string, muted: boolean) {
       dispatch({ type: 'thinking' })
     } else if (uiRef.current.mic === 'idle') send({ type: 'start_listening' })
   }, [send])
+
+  useEffect(() => {
+    nextRef.current = next
+  }, [next])
 
   const confirm = useCallback(
     (yes: boolean) => {
