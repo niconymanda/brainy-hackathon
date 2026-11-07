@@ -46,7 +46,7 @@ def main():
     parser = argparse.ArgumentParser(description="Brainy's controlled H Company web agent (no microphone).")
     parser.add_argument("goal")
     parser.add_argument("--url")
-    parser.add_argument("--model", default=os.getenv("H_MODEL") or "holo3-1-35b-a3b")
+    parser.add_argument("--model", default=os.getenv("H_MODEL") or "holo4-35b-a3b")
     parser.add_argument("--headless", action="store_true")
     parser.add_argument("--channel", help="Installed browser channel, e.g. chrome or msedge (default: bundled Chromium).")
     parser.add_argument("--debug", action="store_true", help="Local exception and page lifecycle diagnostics on stderr.")

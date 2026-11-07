@@ -504,7 +504,7 @@ def main():
     parser.add_argument("--channel", default=os.getenv("BRAINY_BROWSER_CHANNEL",
                                                        "msedge" if sys.platform == "win32" else "chrome"),
                         help="Installed browser for the agent (chrome, msedge); falls back to bundled Chromium.")
-    parser.add_argument("--model", default=os.getenv("H_MODEL") or "holo3-1-35b-a3b")
+    parser.add_argument("--model", default=os.getenv("H_MODEL") or "holo4-35b-a3b")
     parser.add_argument("--max-steps", type=int, default=100)
     parser.add_argument("--search-steps", type=int, default=int(os.getenv("BRAINY_SEARCH_STEPS", "25")),
                         help="Steps without user input before Brainy stops searching and proposes the best option.")

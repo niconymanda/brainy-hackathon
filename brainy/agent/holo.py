@@ -52,18 +52,20 @@ def _data_url(image):
 
 
 class HoloClient:
-    def __init__(self, api_key, model="holo3-1-35b-a3b", http=None):
+    def __init__(self, api_key, model="holo4-35b-a3b", http=None):
         if not api_key:
             raise ValueError("Set H_API_KEY before starting the agent.")
         self.api_key = api_key
         self.model = model
         self.http = http
 
-    async def _chat(self, screenshot, prompt):
+    async def _chat(self, screenshot, prompt, think=True):
         data = {"model": self.model, "messages": [{"role": "user", "content": [
             {"type": "text", "text": prompt},
             {"type": "image_url", "image_url": {"url": _data_url(screenshot) + base64.b64encode(screenshot).decode()}},
         ]}], "temperature": 0, "max_tokens": 512}
+        if not think:
+            data["reasoning_effort"] = "none"
         async def send(client):
             response = await client.post("https://api.hcompany.ai/v1/chat/completions",
                                          headers={"Authorization": "Bearer " + self.api_key}, json=data)
@@ -105,4 +107,5 @@ class HoloClient:
         prompt = ("Localize an element on the GUI image according to my instructions and output a click "
                   "position as Click(x, y) with x num pixels from the left edge and y num pixels from the top edge.\n"
                   + description)
-        return parse_click(await self._chat(screenshot, prompt), viewport)
+        # Grounding is single-shot: H recommends thinking off, which makes it several times faster.
+        return parse_click(await self._chat(screenshot, prompt, think=False), viewport)
