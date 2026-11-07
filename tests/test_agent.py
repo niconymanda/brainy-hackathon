@@ -1,10 +1,12 @@
 import unittest
-from unittest.mock import AsyncMock, MagicMock
+from argparse import Namespace
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 from playwright.async_api import Error
 
 from brainy.agent.browser import Browser
+from brainy.agent.__main__ import run
 from brainy.agent.events import AgentError, ConfirmRequest, Done, NeedsUser
 from brainy.agent.holo import Action, HoloClient, parse_action, parse_click
 from brainy.agent.loop import WebAgent
@@ -88,6 +90,24 @@ class AgentTests(unittest.IsolatedAsyncioTestCase):
         events = [e async for e in WebAgent(self.client, self.browser, self.ask).run("test", "https://example.org")]
         self.assertIsInstance(events[-1], AgentError)
         self.assertNotIn("secret", str(events))
+
+    async def test_error_categories(self):
+        cases = (("screenshot", "screenshot", None),
+                 ("decide", "model call", None),
+                 ("locate", "model call", Action("click", target="Link")),
+                 ("click", "click", Action("click", target="Link")),
+                 ("type", "type", Action("type", target="Name", text="Test")),
+                 ("goto", "navigate", Action("navigate", url="https://example.org")))
+        for method, category, action in cases:
+            with self.subTest(method=method):
+                self.setUp()
+                owner = self.client if method in {"decide", "locate"} else self.browser
+                getattr(owner, method).side_effect = ValueError("secret URL headers page content")
+                if method != "decide":
+                    self.client.decide.return_value = action or Action("done")
+                events = [e async for e in WebAgent(self.client, self.browser, self.ask).run("test")]
+                self.assertEqual(events[-1].reason, f"The web agent could not complete {category} (ValueError).")
+                self.assertNotIn("secret", str(events))
 
     async def test_type_and_user_manual_step(self):
         self.ask.return_value = "private answer"
@@ -184,9 +204,62 @@ class HTTPTests(unittest.IsolatedAsyncioTestCase):
 
 
 class BrowserTests(unittest.IsolatedAsyncioTestCase):
+    def page_mock(self):
+        page = MagicMock()
+        page.is_closed.return_value = False
+        return page
+
+    async def test_newest_open_page_and_closed_page_fallback(self):
+        browser = Browser()
+        first, second, third = (self.page_mock() for _ in range(3))
+        browser._track_page(first)
+        browser._track_page(second)
+        browser._track_page(third)
+        self.assertIs(browser.page, third)
+        third.is_closed.return_value = True
+        self.assertIs(browser.page, second)
+        second.is_closed.return_value = True
+        self.assertIs(browser.page, first)
+        first.is_closed.return_value = True
+        with self.assertRaises(RuntimeError):
+            browser.page
+
+    async def test_click_follows_popup_and_waits_for_load(self):
+        browser = Browser()
+        original, popup = self.page_mock(), self.page_mock()
+        browser._track_page(original)
+        popup.wait_for_load_state = AsyncMock()
+        original.mouse.click = AsyncMock(side_effect=lambda *args: browser._track_page(popup))
+        await browser.click(10, 20)
+        self.assertIs(browser.page, popup)
+        original.mouse.click.assert_awaited_once_with(10, 20)
+        popup.wait_for_load_state.assert_awaited_once_with("domcontentloaded", timeout=5000)
+
+    async def test_load_wait_is_best_effort(self):
+        browser = Browser()
+        browser.page = self.page_mock()
+        browser.page.wait_for_load_state = AsyncMock(side_effect=Error("Timed out"))
+        await browser._wait_for_page()
+
+    async def test_screenshot_falls_back_when_page_closes(self):
+        browser = Browser()
+        first, popup = self.page_mock(), self.page_mock()
+        browser._track_page(first)
+        browser._track_page(popup)
+        first.wait_for_load_state = AsyncMock()
+        first.screenshot = AsyncMock(return_value=b"first page")
+        popup.wait_for_load_state = AsyncMock()
+
+        async def close_popup(**kwargs):
+            popup.is_closed.return_value = True
+            raise Error("Page closed")
+
+        popup.screenshot = AsyncMock(side_effect=close_popup)
+        self.assertEqual(await browser.screenshot(), b"first page")
+
     async def test_type_does_not_touch_noneditable_focus(self):
         browser = Browser()
-        browser.page = MagicMock()
+        browser.page = self.page_mock()
         browser.page.evaluate = AsyncMock(return_value=False)
         self.assertIsNone(await browser.type("Lyon"))
         browser.page.locator.assert_not_called()
@@ -194,7 +267,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_type_clears_types_slowly_and_reads_value(self):
         browser = Browser()
-        browser.page = MagicMock()
+        browser.page = self.page_mock()
         browser.page.evaluate = AsyncMock(side_effect=[True, "Lyon"])
         browser.page.wait_for_timeout = AsyncMock()
         field = browser.page.locator.return_value
@@ -209,7 +282,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_screenshot_navigation_retry(self):
         browser = Browser(headless=True)
-        browser.page = MagicMock()
+        browser.page = self.page_mock()
         browser.page.wait_for_load_state = AsyncMock()
         browser.page.screenshot = AsyncMock(side_effect=[Error("Execution context was destroyed"), b"png"])
         self.assertEqual(await browser.screenshot(), b"png")
@@ -217,7 +290,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_screenshot_other_error(self):
         browser = Browser(headless=True)
-        browser.page = MagicMock()
+        browser.page = self.page_mock()
         browser.page.wait_for_load_state = AsyncMock()
         browser.page.screenshot = AsyncMock(side_effect=Error("Disconnected"))
         with self.assertRaises(Error):
@@ -229,3 +302,44 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         for url in ("file:///etc/passwd", "https://user:password@example.org", "javascript:alert(1)", ""):
             with self.subTest(url=url), self.assertRaises(ValueError):
                 await browser.goto(url)
+
+
+class CLITests(unittest.IsolatedAsyncioTestCase):
+    async def test_ctrl_c_at_close_prompt_exits_and_closes(self):
+        async def events(*args):
+            yield Done("Finished")
+
+        args = Namespace(headless=False, profile_dir=None, model="test", goal="test", url=None)
+        with patch("brainy.agent.__main__.Browser") as browser, \
+                patch("brainy.agent.__main__.HoloClient"), \
+                patch("brainy.agent.__main__.WebAgent") as agent, \
+                patch("builtins.input", side_effect=KeyboardInterrupt), patch("builtins.print"):
+            browser.return_value.__aenter__ = AsyncMock()
+            browser.return_value.__aexit__ = AsyncMock(return_value=False)
+            agent.return_value.run = events
+            with self.assertRaises(KeyboardInterrupt):
+                await run(args)
+            browser.return_value.__aexit__.assert_awaited_once()
+
+    async def test_headed_waits_on_completion_or_error_headless_does_not(self):
+        for headless in (False, True):
+            for event in (Done("Finished"), AgentError("Failure", "Retry"),
+                          AgentError("The step limit was reached.", "Retry")):
+                with self.subTest(headless=headless, event=event):
+                    async def events(*args):
+                        yield event
+
+                    args = Namespace(headless=headless, profile_dir=None, model="test", goal="test", url=None)
+                    with patch("brainy.agent.__main__.Browser") as browser, \
+                            patch("brainy.agent.__main__.HoloClient"), \
+                            patch("brainy.agent.__main__.WebAgent") as agent, \
+                            patch("builtins.input", return_value="") as prompt, patch("builtins.print"):
+                        browser.return_value.__aenter__ = AsyncMock()
+                        browser.return_value.__aexit__ = AsyncMock(return_value=False)
+                        agent.return_value.run = events
+                        self.assertEqual(await run(args), 1 if isinstance(event, AgentError) else 0)
+                        if headless:
+                            prompt.assert_not_called()
+                        else:
+                            prompt.assert_called_once_with("Press Enter to close the browser. ")
+                        browser.return_value.__aexit__.assert_awaited_once()
