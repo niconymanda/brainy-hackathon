@@ -8,6 +8,18 @@ from playwright.async_api import Error, async_playwright
 from .debug import debug_log
 
 
+SECRET_QUESTION = re.compile(r"\b(?:password|mot\s+de\s+passe|card|carte|cvv|cvc|code|pin|iban|otp|sms)\b", re.I)
+
+
+class SecretFieldError(ValueError):
+    pass
+
+
+def is_secret_field(text):
+    text = re.sub(r"([a-z])([A-Z])", r"\1 \2", text).replace("_", " ")
+    return bool(SECRET_QUESTION.search(normalize_choice(text)))
+
+
 def normalize_choice(text):
     text = unicodedata.normalize("NFKD", text.casefold())
     return " ".join("".join(c for c in text if not unicodedata.combining(c)).split())
@@ -200,6 +212,48 @@ class Browser:
         if not normalize_choice(text):
             return None
         return await self.select_text(text, exact=True, find_only=True)
+
+    async def find_fill(self, field):
+        if is_secret_field(field):
+            raise SecretFieldError()
+        field = normalize_choice(field)
+        if not field:
+            return None
+        page = await self.ensure_page()
+        for frame in page.frames:
+            matches = frame.locator('input, textarea, [role="combobox"][contenteditable="true"]')
+            for index in range(await matches.count()):
+                element = matches.nth(index)
+                if not await element.is_visible() or not await element.is_enabled():
+                    continue
+                metadata = await self._fill_metadata(element)
+                labels = [normalize_choice(label) for label in metadata["labels"]]
+                if not any(field in label for label in labels):
+                    continue
+                self._check_fill_secret(metadata)
+                if metadata["type"] not in {"", "text", "search", "email", "url", "tel", "number", "textarea"}:
+                    continue
+                if await element.is_editable():
+                    return element
+        return None
+
+    async def _fill_metadata(self, element):
+        return await element.evaluate("""el => ({
+            type: el.type || '', autocomplete: el.getAttribute('autocomplete') || '',
+            labels: [el.getAttribute('placeholder') || '', el.getAttribute('aria-label') || '',
+                     ...Array.from(el.labels || []).map(label => label.innerText), el.getAttribute('name') || '']
+        })""")
+
+    def _check_fill_secret(self, metadata):
+        if (metadata["type"] == "password" or
+                any(is_secret_field(label) for label in metadata["labels"]) or
+                metadata.get("autocomplete", "").startswith(("cc-", "one-time-code"))):
+            raise SecretFieldError()
+
+    async def fill_field(self, element, text):
+        await element.click()
+        self._check_fill_secret(await self._fill_metadata(self.page.locator(":focus")))
+        return await self.type(text)
 
     async def select_choice(self, element, text):
         return await self._select_first_visible(element, text, exact=True)

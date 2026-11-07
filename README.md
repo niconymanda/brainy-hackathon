@@ -190,6 +190,25 @@ Use repeatable `--choose TEXT` options (e.g. `--choose Consultation --choose "Co
 
 > *Répétez `--choose TEXTE` (par exemple `--choose Consultation --choose "Consultation pour acné" --choose "Guizmo Coco"`) pour sélectionner dans l'ordre via le DOM sans appel Holo. Seul le premier choix en attente est essayé, avec égalité exacte du libellé visible sans distinction de casse, d'accents ou d'espacement ; un choix absent reste en attente pendant que Holo poursuit normalement. Les choix sensibles suivent le parcours modèle/confirmation habituel, jamais le raccourci direct. Les sélections directes comptent dans la limite d'étapes.*
 
+Interleave `--fill "FIELD=TEXT"` with `--choose` in command-line order. `FIELD` is a normalized substring of a visible, enabled, editable field's placeholder, aria-label, associated label or name; the first `=` separates field from text. Filling uses the same visible typing and autocomplete wait as model-driven typing. Secret-like fields are refused and dropped with a warning; never pass passwords, card details or codes on the command line. Use `|` for exact-label alternatives in a choice, e.g. `--choose "Accepter|Tout accepter|J'accepte"`. Only the first pending item is tried; if absent, Holo continues normally without discarding it. Model selections/typing also consume matching pending items.
+
+> *Alternez `--fill "CHAMP=TEXTE"` et `--choose` dans l'ordre souhaité. `CHAMP` est une sous-chaîne normalisée du placeholder, de l'aria-label, du libellé associé ou du nom d'un champ visible, actif et modifiable ; le premier `=` sépare champ et texte. La saisie conserve le rythme visible et l'attente d'autocomplétion habituels. Les champs sensibles sont refusés et retirés avec un avertissement ; ne passez jamais de mots de passe, données de carte ou codes en ligne de commande. `|` sépare des libellés alternatifs exacts, par exemple `--choose "Accepter|Tout accepter|J'accepte"`. Seule la première action en attente est essayée ; si elle est absente, Holo continue sans la supprimer. Les sélections/saisies du modèle retirent aussi les actions correspondantes.*
+
+Illustrative Doctolib search (labels can vary; this does not bypass site blocking):
+
+> *Exemple de recherche Doctolib (les libellés peuvent varier ; ceci ne contourne pas les blocages du site) :*
+
+```bash
+python -m brainy.agent "Search for a dermatologist in Paris 9e and say done when results show." \
+  --url https://www.doctolib.fr \
+  --choose "Accepter|Tout accepter" \
+  --fill "spécialité=dermatologue et vénérologue" \
+  --choose "Dermatologue et vénérologue" \
+  --fill "Où=Paris 9e" \
+  --choose "Paris 9e (75009)|Paris 9e" \
+  --choose "Rechercher"
+```
+
 Use `--channel chrome` or `--channel msedge` to launch your installed Google Chrome or Microsoft Edge; otherwise Playwright uses bundled Chromium. Combining `--channel chrome --profile-dir PATH` can reduce bot blocking by keeping a regular browser profile (use a dedicated private profile, not one already open elsewhere). Headed mode also disables Blink's AutomationControlled feature; none of these options guarantees access to sites that block automation. Headed runs wait for Enter before closing; Ctrl+C exits.
 
 > *Utilisez `--channel chrome` ou `--channel msedge` pour lancer Google Chrome ou Microsoft Edge installé ; sinon Playwright utilise Chromium fourni. La combinaison `--channel chrome --profile-dir CHEMIN` peut réduire les blocages anti-bot en conservant un profil de navigateur (utilisez un profil privé dédié, pas un profil déjà ouvert ailleurs). Le mode visible désactive aussi la fonctionnalité Blink AutomationControlled ; aucune option ne garantit l'accès aux sites qui bloquent l'automatisation. En mode visible, Entrée ferme le navigateur en fin d'exécution ; Ctrl+C quitte.*

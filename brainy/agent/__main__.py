@@ -15,6 +15,19 @@ from .holo import HoloClient
 from .loop import WebAgent
 
 
+class PendingAction(argparse.Action):
+    def __call__(self, parser, namespace, values, option_string=None):
+        queue = list(getattr(namespace, self.dest, None) or [])
+        if option_string == "--fill":
+            if "=" not in values or not values.split("=", 1)[0].strip():
+                raise argparse.ArgumentError(self, "expected FIELD=TEXT with a non-empty field")
+            field, text = values.split("=", 1)
+            queue.append(("fill", field, text))
+        else:
+            queue.append(("choose", values))
+        setattr(namespace, self.dest, queue)
+
+
 async def ask(question):
     loop = asyncio.get_running_loop()
     answer = loop.create_future()
@@ -46,7 +59,8 @@ async def run_goal(goal, args):
     async with Browser(headless=args.headless, profile_dir=args.profile_dir,
                        channel=args.channel, debug=args.debug) as browser:
         status = 0
-        async for event in WebAgent(client, browser, ask, debug=args.debug, choices=args.choose).run(goal, args.url):
+        async for event in WebAgent(client, browser, ask, debug=args.debug,
+                                   pending_actions=args.pending_actions).run(goal, args.url):
             if isinstance(event, AgentStep):
                 print(event.narration, flush=True)
             elif isinstance(event, Done):
@@ -73,8 +87,10 @@ def add_agent_arguments(parser):
     parser.add_argument("--url")
     parser.add_argument("--model", default=os.getenv("H_MODEL") or "holo3-1-35b-a3b")
     parser.add_argument("--headless", action="store_true")
-    parser.add_argument("--choose", action="append", default=[], metavar="TEXT",
+    parser.add_argument("--choose", action=PendingAction, dest="pending_actions", default=[], metavar="TEXT",
                         help="Choose an exact visible label directly, in order; repeat for multiple choices.")
+    parser.add_argument("--fill", action=PendingAction, dest="pending_actions", metavar="FIELD=TEXT",
+                        help="Fill a matching non-secret field directly; ordered with --choose.")
     parser.add_argument("--channel", help="Installed browser channel, e.g. chrome or msedge (default: bundled Chromium).")
     parser.add_argument("--debug", action="store_true", help="Local exception and page lifecycle diagnostics on stderr.")
     parser.add_argument("--profile-dir", help="Optional persistent browser profile; contains private browsing data.")

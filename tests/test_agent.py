@@ -2,15 +2,15 @@ import unittest
 import io
 import json
 from contextlib import redirect_stderr
-from argparse import Namespace
+from argparse import ArgumentParser, Namespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 from playwright.async_api import Error
 
-from brainy.agent.browser import Browser
+from brainy.agent.browser import Browser, SecretFieldError
 from brainy.agent.debug import debug_log
-from brainy.agent.__main__ import run
+from brainy.agent.__main__ import PendingAction, run
 from brainy.agent.events import AgentError, AgentStep, ConfirmRequest, Done, NeedsUser
 from brainy.agent.holo import Action, HoloClient, parse_action, parse_click
 from brainy.agent.loop import WebAgent
@@ -122,6 +122,83 @@ class AgentTests(unittest.IsolatedAsyncioTestCase):
                   choices=["Consultation"]).run("test")]
         self.assertIn("select_text (Error)", events[-1].reason)
         self.assertNotIn("private details", events[-1].reason)
+
+    async def test_mixed_fill_choose_queue_order(self):
+        self.browser.fill_field.return_value = "Lyon"
+        self.client.decide.return_value = Action("done")
+        queue = [("choose", "Accepter"), ("fill", "ville", "Lyon"), ("choose", "Lyon centre")]
+        events = [event async for event in WebAgent(self.client, self.browser, self.ask,
+                  pending_actions=queue).run("test")]
+        self.assertEqual([event.narration for event in events if isinstance(event, AgentStep)],
+                         ["Selecting Accepter.", "Typing Lyon.", "Selecting Lyon centre.", ""])
+        self.client.decide.assert_awaited_once()
+        self.browser.find_fill.assert_awaited_once_with("ville")
+        self.browser.fill_field.assert_awaited_once_with(self.browser.find_fill.return_value, "Lyon")
+        self.assertIn("field now contains 'Lyon'", str(self.client.decide.call_args.args[2]))
+        self.assertEqual(queue[0], ("choose", "Accepter"))
+
+    async def test_choice_alternatives(self):
+        self.browser.find_choice.side_effect = [None, "cookie button"]
+        self.client.decide.return_value = Action("done")
+        events = [event async for event in WebAgent(self.client, self.browser, self.ask,
+                  pending_actions=[("choose", "Accepter|Tout accepter")]).run("test")]
+        self.assertEqual([call.args[0] for call in self.browser.find_choice.await_args_list],
+                         ["Accepter", "Tout accepter"])
+        self.browser.select_choice.assert_awaited_once_with("cookie button", "Tout accepter")
+        self.assertEqual(events[0], AgentStep("Selecting Tout accepter.", "select_text"))
+
+    async def test_fill_not_found_keeps_first_item_and_falls_back(self):
+        self.browser.find_fill.return_value = None
+        self.client.decide.side_effect = [Action("scroll", text="down"), Action("done")]
+        events = [event async for event in WebAgent(self.client, self.browser, self.ask,
+                  pending_actions=[("fill", "ville", "Lyon"), ("choose", "Next")]).run("test")]
+        self.assertEqual(self.browser.find_fill.await_count, 2)
+        self.browser.find_choice.assert_not_awaited()
+        self.browser.fill_field.assert_not_awaited()
+        self.assertIsInstance(events[-1], Done)
+
+    async def test_holo_typing_consumes_pending_fill(self):
+        self.browser.find_fill.return_value = None
+        self.client.decide.side_effect = [Action("type", target="city", text=" LYON "), Action("done")]
+        events = [event async for event in WebAgent(self.client, self.browser, self.ask,
+                  pending_actions=[("fill", "ville", "Lyon")]).run("test")]
+        self.browser.find_fill.assert_awaited_once()
+        self.assertIsInstance(events[-1], Done)
+
+    async def test_holo_selection_consumes_choice_alternative(self):
+        self.browser.find_choice.return_value = None
+        self.client.decide.side_effect = [Action("select_text", text="Tout accepter"), Action("done")]
+        events = [event async for event in WebAgent(self.client, self.browser, self.ask,
+                  pending_actions=[("choose", "Accepter|Tout accepter")]).run("test")]
+        self.assertEqual(self.browser.find_choice.await_count, 2)
+        self.assertIsInstance(events[-1], Done)
+
+    async def test_secret_fill_is_dropped_without_exposing_text(self):
+        for method in ("find_fill", "fill_field"):
+            with self.subTest(method=method):
+                self.setUp()
+                getattr(self.browser, method).side_effect = SecretFieldError()
+                self.client.decide.return_value = Action("done")
+                events = [event async for event in WebAgent(self.client, self.browser, self.ask,
+                          pending_actions=[("fill", "code", "sensitive-value")]).run("test")]
+                self.assertIn("Skipped secret-like fill field", events[0].narration)
+                self.assertNotIn("sensitive-value", str(events))
+                self.assertNotIn("sensitive-value", str(self.client.decide.call_args))
+                self.browser.find_fill.assert_awaited_once()
+
+    async def test_fill_error_is_categorized(self):
+        self.browser.find_fill.side_effect = Error("private details")
+        events = [event async for event in WebAgent(self.client, self.browser, self.ask,
+                  pending_actions=[("fill", "ville", "Lyon")]).run("test")]
+        self.assertIn("type (Error)", events[-1].reason)
+        self.assertNotIn("private details", events[-1].reason)
+
+    async def test_risky_alternative_never_uses_direct_path(self):
+        self.client.decide.return_value = Action("done")
+        events = [event async for event in WebAgent(self.client, self.browser, self.ask,
+                  pending_actions=[("choose", "Continue|Pay")]).run("test")]
+        self.browser.find_choice.assert_not_awaited()
+        self.assertIsInstance(events[-1], Done)
 
     async def test_gate_blocks_without_explicit_yes(self):
         for answer in ("non", "", "maybe", "yes please", "no"):
@@ -401,6 +478,72 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         page = MagicMock()
         page.is_closed.return_value = False
         return page
+
+    def fill_browser(self, labels, kind="text"):
+        browser = Browser()
+        browser.page = self.page_mock()
+        frame = MagicMock()
+        browser.page.frames = [frame]
+        matches = frame.locator.return_value
+        matches.count = AsyncMock(return_value=1)
+        element = matches.nth.return_value
+        element.is_visible = AsyncMock(return_value=True)
+        element.is_enabled = AsyncMock(return_value=True)
+        element.is_editable = AsyncMock(return_value=True)
+        element.evaluate = AsyncMock(return_value={"type": kind, "labels": labels})
+        return browser, element
+
+    async def test_fill_matches_each_field_attribute(self):
+        for index in range(4):
+            with self.subTest(attribute=index):
+                labels = ["", "", "", ""]
+                labels[index] = "Nom, SPÉCIALITÉ, établissement..."
+                browser, element = self.fill_browser(labels)
+                self.assertIs(await browser.find_fill("  specialite "), element)
+                script = element.evaluate.call_args.args[0]
+                for attribute in ("placeholder", "aria-label", "el.labels", "name"):
+                    self.assertIn(attribute, script)
+                element.click.assert_not_called()
+
+    async def test_fill_supports_textarea_and_editable_combobox(self):
+        for kind in ("textarea", ""):
+            with self.subTest(kind=kind):
+                browser, element = self.fill_browser(["Ville"], kind)
+                self.assertIs(await browser.find_fill("ville"), element)
+
+    async def test_fill_skips_nonmatching_hidden_disabled_readonly_or_wrong_type(self):
+        for case in ("not found", "hidden", "disabled", "readonly", "wrong type", "empty"):
+            with self.subTest(case=case):
+                browser, element = self.fill_browser(["Ville"], "hidden" if case == "wrong type" else "text")
+                if case in ("hidden", "disabled", "readonly"):
+                    getattr(element, {"hidden": "is_visible", "disabled": "is_enabled", "readonly": "is_editable"}[case]).return_value = False
+                field = "" if case == "empty" else "specialite" if case == "not found" else "ville"
+                self.assertIsNone(await browser.find_fill(field))
+
+    async def test_fill_refuses_secret_request_or_dom_metadata(self):
+        for labels, kind, field in ((["Ville"], "text", "mot de passe"),
+                                     (["Ville"], "password", "ville"),
+                                     (["Ville", "credit_card"], "text", "ville"),
+                                     (["Ville", "accessCode"], "text", "ville")):
+            with self.subTest(labels=labels, kind=kind, field=field):
+                browser, element = self.fill_browser(labels, kind)
+                with self.assertRaises(SecretFieldError):
+                    await browser.find_fill(field)
+                element.click.assert_not_called()
+
+    async def test_fill_clicks_then_reuses_typing_and_rechecks_secret_focus(self):
+        browser, element = self.fill_browser(["Ville"])
+        element.click = AsyncMock()
+        browser.type = AsyncMock(return_value="Lyon")
+        browser._fill_metadata = AsyncMock(return_value={"type": "text", "labels": ["Ville"]})
+        self.assertEqual(await browser.fill_field(element, "Lyon"), "Lyon")
+        element.click.assert_awaited_once()
+        browser.type.assert_awaited_once_with("Lyon")
+        browser.type.reset_mock()
+        browser._fill_metadata.return_value = {"type": "password", "labels": ["Ville"]}
+        with self.assertRaises(SecretFieldError):
+            await browser.fill_field(element, "private")
+        browser.type.assert_not_awaited()
 
     async def test_find_choice_uses_exact_non_clicking_resolution(self):
         browser = Browser()
@@ -704,7 +847,7 @@ class CLITests(unittest.IsolatedAsyncioTestCase):
         async def events(*args):
             yield Done("Finished")
 
-        args = Namespace(headless=False, profile_dir=None, model="test", goal="test", url=None, debug=False, channel=None, choose=[])
+        args = Namespace(headless=False, profile_dir=None, model="test", goal="test", url=None, debug=False, channel=None, pending_actions=[])
         with patch("brainy.agent.__main__.Browser") as browser, \
                 patch("brainy.agent.__main__.HoloClient"), \
                 patch("brainy.agent.__main__.WebAgent") as agent, \
@@ -724,7 +867,7 @@ class CLITests(unittest.IsolatedAsyncioTestCase):
                     async def events(*args):
                         yield event
 
-                    args = Namespace(headless=headless, profile_dir=None, model="test", goal="test", url=None, debug=False, channel=None, choose=[])
+                    args = Namespace(headless=headless, profile_dir=None, model="test", goal="test", url=None, debug=False, channel=None, pending_actions=[])
                     with patch("brainy.agent.__main__.Browser") as browser, \
                             patch("brainy.agent.__main__.HoloClient"), \
                             patch("brainy.agent.__main__.WebAgent") as agent, \
@@ -744,7 +887,7 @@ class CLITests(unittest.IsolatedAsyncioTestCase):
             yield Done("Finished")
 
         args = Namespace(headless=True, profile_dir="profile", model="test", goal="test", url=None,
-                         debug=True, channel="chrome", choose=["Consultation", "Guizmo Coco"])
+                         debug=True, channel="chrome", pending_actions=[("choose", "Consultation"), ("fill", "ville", "Lyon")])
         with patch("brainy.agent.__main__.Browser") as browser, \
                 patch("brainy.agent.__main__.HoloClient"), \
                 patch("brainy.agent.__main__.WebAgent") as agent, patch("builtins.print"):
@@ -754,7 +897,20 @@ class CLITests(unittest.IsolatedAsyncioTestCase):
             await run(args)
             browser.assert_called_once_with(headless=True, profile_dir="profile", channel="chrome", debug=True)
             self.assertTrue(agent.call_args.kwargs["debug"])
-            self.assertEqual(agent.call_args.kwargs["choices"], ["Consultation", "Guizmo Coco"])
+            self.assertEqual(agent.call_args.kwargs["pending_actions"], [("choose", "Consultation"), ("fill", "ville", "Lyon")])
+
+    async def test_cli_mixed_queue_preserves_order_and_first_equals(self):
+        parser = ArgumentParser()
+        parser.add_argument("--choose", action=PendingAction, dest="pending_actions", default=[])
+        parser.add_argument("--fill", action=PendingAction, dest="pending_actions")
+        args = parser.parse_args(["--choose", "Accepter|Tout accepter", "--fill", "ville=Lyon=centre",
+                                  "--choose", "Lyon", "--fill", "nom="])
+        self.assertEqual(args.pending_actions, [("choose", "Accepter|Tout accepter"),
+                         ("fill", "ville", "Lyon=centre"), ("choose", "Lyon"), ("fill", "nom", "")])
+        self.assertEqual(parser.parse_args([]).pending_actions, [])
+        for value in ("missing separator", "=text"):
+            with self.subTest(value=value), redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                parser.parse_args(["--fill", value])
 
 
 class DebugTests(unittest.TestCase):
