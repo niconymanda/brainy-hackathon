@@ -1,5 +1,6 @@
 import unittest
 import io
+import json
 from contextlib import redirect_stderr
 from argparse import Namespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -44,6 +45,8 @@ class AgentTests(unittest.IsolatedAsyncioTestCase):
         self.browser.screenshot.return_value = b"png"
         self.browser.type.return_value = "Test User"
         self.browser.take_recovery_notes.return_value = []
+        self.browser.page_context.return_value = {"url": "https://example.org/results", "title": "Results",
+                                                  "text": "First result: Lyon"}
         self.client = AsyncMock()
         self.client.locate.return_value = (100, 200)
         self.ask = AsyncMock(return_value="non")
@@ -79,6 +82,59 @@ class AgentTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.client.decide.await_count, 2)
         self.assertIsInstance(events[-1], AgentError)
         self.assertIn("step limit", events[-1].reason)
+
+    async def test_repeat_warning_after_two_unchanged_actions(self):
+        histories = []
+        actions = iter([Action("click", target="Rechercher"), Action("click", target="  RECHERCHER "),
+                        Action("done")])
+
+        async def decide(screenshot, goal, history, **kwargs):
+            histories.append(list(history))
+            return next(actions)
+
+        self.client.decide.side_effect = decide
+        events = [e async for e in WebAgent(self.client, self.browser, self.ask).run("test")]
+        self.assertNotIn("had no visible effect", str(histories[1]))
+        self.assertIn("had no visible effect; do not repeat it", str(histories[2]))
+        self.assertEqual(self.browser.click.await_count, 2)
+        self.assertIsInstance(events[-1], Done)
+
+    async def test_third_unchanged_attempt_asks_without_clicking(self):
+        self.ask.return_value = "try scrolling"
+        events = await self.collect([Action("click", target="Rechercher")] * 3 + [Action("done")])
+        self.assertEqual(self.browser.click.await_count, 2)
+        self.assertTrue(any(isinstance(e, NeedsUser) for e in events))
+        self.assertIn("User answered: try scrolling", self.client.decide.call_args.args[2])
+
+    async def test_repeat_question_keeps_stop_and_secret_rules(self):
+        for target, answer in (("Rechercher", "non"), ("Show PIN", "sensitive answer")):
+            with self.subTest(target=target):
+                self.setUp()
+                self.ask.return_value = answer
+                events = await self.collect([Action("click", target=target)] * 3 + [Action("done")])
+                self.assertEqual(self.browser.click.await_count, 2)
+                self.assertNotIn("sensitive answer", str(self.client.decide.call_args.args[2]))
+                if answer == "non":
+                    self.assertEqual(events[-1], Done("Stopped at your request."))
+                else:
+                    self.assertIn("User has completed the requested manual step", str(self.client.decide.call_args.args[2]))
+
+    async def test_page_change_allows_repeated_actions(self):
+        for change in ("url", "screenshot"):
+            with self.subTest(change=change):
+                self.setUp()
+                if change == "url":
+                    self.browser.page_context.side_effect = [
+                        {"url": str(i), "title": "Results", "text": "Results"} for i in range(4)]
+                else:
+                    self.browser.screenshot.side_effect = [b"one", b"two", b"three", b"four"]
+                await self.collect([Action("click", target="Next")] * 3 + [Action("done")])
+                self.assertEqual(self.browser.click.await_count, 3)
+                self.ask.assert_not_awaited()
+
+    async def test_page_context_forwarded_to_decide(self):
+        await self.collect([Action("done")])
+        self.assertEqual(self.client.decide.call_args.kwargs["page_context"], self.browser.page_context.return_value)
 
     async def test_empty_budget(self):
         events = await self.collect([], max_steps=0)
@@ -191,6 +247,14 @@ class AgentTests(unittest.IsolatedAsyncioTestCase):
 
 
 class HTTPTests(unittest.IsolatedAsyncioTestCase):
+    async def test_page_context_in_prompt(self):
+        client = HoloClient("test-key")
+        client._chat = AsyncMock(return_value='{"action":"done"}')
+        context = {"url": "https://example.org/results", "title": "Search results", "text": "First result: Lyon"}
+        await client.decide(b"png", "search", [], page_context=context)
+        prompt = client._chat.call_args.args[1]
+        self.assertIn(json.dumps(context), prompt)
+        self.assertIn("current sub-step is already satisfied", prompt)
     async def test_malformed_action_retried(self):
         client = HoloClient("test-key")
         client._chat = AsyncMock(side_effect=['{"action":"type"}',
@@ -232,6 +296,19 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         page = MagicMock()
         page.is_closed.return_value = False
         return page
+
+    async def test_page_context_uses_truncated_body_text_not_input_values(self):
+        browser = Browser()
+        browser.page = self.page_mock()
+        browser.page.url = "https://example.org/results"
+        browser.page.title = AsyncMock(return_value="Results")
+        browser.page.evaluate = AsyncMock(return_value="First result: Lyon")
+        self.assertEqual(await browser.page_context(), {"url": "https://example.org/results", "title": "Results",
+                                                        "text": "First result: Lyon"})
+        script = browser.page.evaluate.call_args.args[0]
+        self.assertIn("innerText", script)
+        self.assertIn("1500", script)
+        self.assertNotIn(".value", script)
 
     async def test_reopen_last_url_and_limit_two_per_run(self):
         browser = Browser()
