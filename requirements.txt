@@ -1,0 +1,4 @@
+httpx==0.28.1
+websockets==15.0.1
+sounddevice==0.5.1
+python-dotenv==1.0.1

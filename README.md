@@ -108,9 +108,43 @@ Brainy doesn't wait for every website to become accessible. It works on existing
 > - *Remplir des formulaires administratifs*
 > - *Consulter et modifier des réservations existantes*
 
+## Speech-to-text (Gladia)
+> *Transcription vocale (Gladia)*
+
+Requires Python 3.10+ and a Gladia API key. From the repository root, create a virtual environment and install the pinned dependencies. On Windows use `py -m venv .venv` and `.venv\Scripts\activate` instead of the first two commands below. Linux microphone capture also needs PortAudio (e.g. `sudo apt install libportaudio2` on Debian/Ubuntu); sounddevice's macOS/Windows wheels bundle it. Allow microphone access in your OS privacy settings.
+
+> *Python 3.10+ et une clé API Gladia sont nécessaires. À la racine du dépôt, créez un environnement virtuel et installez les dépendances épinglées. Sous Windows, utilisez `py -m venv .venv` et `.venv\Scripts\activate` à la place des deux premières commandes. Sous Linux, le microphone nécessite aussi PortAudio (par exemple `sudo apt install libportaudio2` sur Debian/Ubuntu) ; les distributions macOS/Windows de sounddevice l'incluent. Autorisez l'accès au microphone dans les paramètres de confidentialité.*
+
+```sh
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements.txt
+```
+
+Copy `.env.example` to `.env` and set `GLADIA_API_KEY`, or export that environment variable. Never commit your key. Audio is sent to Gladia over the network and may incur usage charges. Transcripts print to stdout; redirected output contains only final utterances.
+
+> *Copiez `.env.example` vers `.env` et renseignez `GLADIA_API_KEY`, ou exportez cette variable d'environnement. Ne commitez jamais votre clé. L'audio est envoyé à Gladia via le réseau et peut entraîner des frais. Les transcriptions s'affichent sur la sortie standard ; une sortie redirigée ne contient que les énoncés définitifs.*
+
+```sh
+python -m brainy.stt --help
+python -m brainy.stt --list-devices
+python -m brainy.stt
+python -m brainy.stt --device 0 --language fr
+python -m brainy.stt --language fr --language en
+python -m brainy.stt --file sample.wav --language fr --language en
+```
+
+The default detects the language automatically. Repeat `--language` to enable code switching between the specified languages (French/English recommended for this team). Partial text updates in place in a terminal; final utterances get their own line. Ctrl+C stops capture, sends `stop_recording`, waits up to 30 seconds for final results and closes the connection. WAV input must be uncompressed 16 kHz, mono, signed 16-bit PCM and is streamed at real-time speed; no conversion is performed.
+
+> *Par défaut, la langue est détectée automatiquement. Répétez `--language` pour permettre l'alternance entre les langues indiquées (français/anglais recommandés pour cette équipe). Le texte provisoire est mis à jour sur place dans un terminal ; chaque énoncé définitif occupe sa propre ligne. Ctrl+C arrête la capture, envoie `stop_recording`, attend jusqu'à 30 secondes les résultats définitifs et ferme la connexion. Le fichier WAV doit être en PCM non compressé, 16 kHz, mono, signé sur 16 bits ; il est envoyé à vitesse réelle, sans conversion.*
+
+Reuse `brainy.stt.GladiaClient.transcribe(audio, callback, stop)` with an async generator of PCM byte chunks, a synchronous callback receiving `Transcript` objects (`text`, `is_final`, `utterance_id`, `language`), and an optional `asyncio.Event` for graceful shutdown. Audio sources live in `brainy/stt/audio.py`; the thin CLI is `brainy/stt/__main__.py`. Run offline protocol tests with `python -m unittest discover -s tests -v`.
+
+> *Réutilisez `brainy.stt.GladiaClient.transcribe(audio, callback, stop)` avec un générateur asynchrone de blocs PCM, un callback synchrone recevant des objets `Transcript` (`text`, `is_final`, `utterance_id`, `language`) et, éventuellement, un `asyncio.Event` pour l'arrêt propre. Les sources audio sont dans `brainy/stt/audio.py` ; la CLI est dans `brainy/stt/__main__.py`. Lancez les tests hors ligne avec `python -m unittest discover -s tests -v`.*
+
 ## Status
 > *État du projet*
 
-Hackathon project, early stage. Setup and usage instructions will be added as the code lands.
+Hackathon project, early stage. The standalone Gladia speech-to-text CLI is implemented; the rest of the assistant described above remains a project vision.
 
-> *Projet de hackathon, à un stade précoce. Les instructions d'installation et d'utilisation seront ajoutées au fur et à mesure du développement.*
+> *Projet de hackathon, à un stade précoce. La CLI autonome de transcription Gladia est implémentée ; le reste de l'assistant décrit ci-dessus reste une vision du projet.*
