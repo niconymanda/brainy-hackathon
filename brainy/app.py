@@ -45,6 +45,12 @@ YES = re.compile(r"^\W*(oui|yes|ouais|vas-y|go|ok|okay|d'accord|parfait|c'est bo
 NO = re.compile(r"^\W*(non|no|stop|arr[êe]t\w*|annule|on s['’]arr[êe]te|laisse tomber)\b", re.I)
 FRENCH = ("\nLanguage: write every narration and question in French, as one short spoken sentence "
           "addressed to the user (tutoiement).")
+AUTONOMY = ("\nAutonomy: the user is delegating and does not want to be interrupted. The browser is signed in to "
+            "the user's own account: treat its profile data (name, birth name, date of birth, address, phone, email) "
+            "as correct, keep prefilled fields and continue without asking. Make reasonable choices yourself (first "
+            "available slot matching the request, the visit reason closest to the request). Use ask_user only when a "
+            "required choice truly cannot be inferred from the request or the account (e.g. which family member). "
+            "Never ask to confirm intermediate steps; the only confirmation is right before the final booking or payment.")
 BUDGET = ("\nSearch limit: if nothing matches every constraint after checking about 3 practitioners or dates, "
           "stop searching and use ask_user to propose the closest option, saying which constraint it does not meet.")
 SITE_TIPS = {
@@ -263,11 +269,11 @@ class Session:
             key = os.getenv("H_API_KEY") or os.getenv("HCOMPANY_API_KEY", "")
             client = HoloClient(key, self.app.args.model)
             browser = await self.app.get_browser()
-            goal = build_h_prompt(request, request) + FRENCH + BUDGET + site_tips(request)
+            goal = build_h_prompt(request, request) + FRENCH + AUTONOMY + BUDGET + site_tips(request)
             args = self.app.args
             agent = WebAgent(client, browser, self.ask, max_steps=args.max_steps,
                              wrap_up_steps=getattr(args, "search_steps", None),
-                             wrap_up_seconds=getattr(args, "search_seconds", None))
+                             wrap_up_seconds=getattr(args, "search_seconds", None), wrap_up_grace=15)
             async for event in agent.run(goal, start_url_for(request)):
                 if isinstance(event, AgentStep):
                     if event.action not in {"done", "ask_user", "confirm"}:
@@ -375,10 +381,10 @@ def main():
                                                        "msedge" if sys.platform == "win32" else "chrome"),
                         help="Installed browser for the agent (chrome, msedge); falls back to bundled Chromium.")
     parser.add_argument("--model", default=os.getenv("H_MODEL") or "holo3-1-35b-a3b")
-    parser.add_argument("--max-steps", type=int, default=40)
-    parser.add_argument("--search-steps", type=int, default=int(os.getenv("BRAINY_SEARCH_STEPS", "12")),
+    parser.add_argument("--max-steps", type=int, default=100)
+    parser.add_argument("--search-steps", type=int, default=int(os.getenv("BRAINY_SEARCH_STEPS", "25")),
                         help="Steps without user input before Brainy stops searching and proposes the best option.")
-    parser.add_argument("--search-seconds", type=float, default=float(os.getenv("BRAINY_SEARCH_SECONDS", "120")),
+    parser.add_argument("--search-seconds", type=float, default=float(os.getenv("BRAINY_SEARCH_SECONDS", "240")),
                         help="Same limit in seconds.")
     parser.add_argument("--login", metavar="URL", nargs="?", const="https://www.doctolib.fr/sessions/new",
                         help="Only open the agent's browser to sign in to a site once (default: Doctolib).")

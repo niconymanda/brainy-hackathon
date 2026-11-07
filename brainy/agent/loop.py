@@ -8,7 +8,8 @@ from .debug import debug_log
 
 RISKY = re.compile(r"pay|payer|submit|envoyer|valider|book|réserver|confirm|acheter|order|commander", re.I)
 WRAP_UP = ("Search budget used up: stop searching now. Use ask_user to propose the best option seen so far "
-           "(say which constraint it does not meet, if any), or say nothing suitable was found and offer to keep looking.")
+           "(say which constraint it does not meet, if any), or say nothing suitable was found and offer to keep looking. "
+           "If you are already completing a booking that matches the request, ignore this and continue.")
 OUT_OF_BUDGET = "This is taking longer than expected. Should I keep going, or stop here?"
 SECRET_QUESTION = re.compile(r"\b(?:password|mot\s+de\s+passe|card|carte|cvv|cvc|code|pin|iban|otp|sms)\b", re.I)
 
