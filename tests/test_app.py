@@ -196,7 +196,7 @@ class HelperTests(unittest.TestCase):
     def test_obvious_questions(self):
         for q in ("Est-ce que tu veux bien que je prenne le rendez-vous pour toi ?",
                   "Je confirme la sélection de la catégorie dermatologue ?",
-                  "Ton nom de naissance est-il Esposito-Farès ?"):
+                  "Ton nom de naissance est-il Esposito-Farès ?", "Est-ce que je continue ou pas ?"):
             self.assertTrue(app_module.obvious_question(q), q)
         for q in ("Quel âge a le patient ?", "Peux-tu entrer ton mot de passe ?",
                   "Pour Léo ou pour Inès ?", "Est-ce que je réserve pour Léo ou pour Inès ?",

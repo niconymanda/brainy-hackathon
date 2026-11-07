@@ -56,7 +56,7 @@ AUTONOMY = ("\nAutonomy: the user is delegating and does not want to be interrup
 OBVIOUS = re.compile(r"^\W*(est-ce que|veux-tu|tu veux|voulez-vous|je confirme|confirmes?-tu|dois-je|je peux|puis-je|"
                      r"peux-tu confirmer|c'est bien|ok pour|je (prends|sélectionne|choisis|continue|valide))|"
                      r"\b(est-(il|elle)|bien)\b", re.I)
-OPEN_QUESTION = re.compile(r"\b(quel|quelle|quels|quelles|lequel|laquelle|combien|quand|où|comment|pourquoi|ou)\b", re.I)
+OPEN_QUESTION = re.compile(r"\b(quel|quelle|quels|quelles|lequel|laquelle|combien|quand|où|comment|pourquoi|ou(?! (pas|non)\b))\b", re.I)
 AUTO_REPLY = ("Oui. Ne me demande pas de valider les étapes intermédiaires : choisis l'option la plus logique d'après "
               "ma demande et mon compte, et continue jusqu'à la confirmation finale.")
 BUDGET = ("\nSearch limit: if nothing matches every constraint after checking about 3 practitioners or dates, "
