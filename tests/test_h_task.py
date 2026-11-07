@@ -1,14 +1,12 @@
 import argparse
-import asyncio
 import io
-import signal
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import AsyncMock, patch
 
-from brainy.h_task import H_PROMPT_TEMPLATE, build_h_prompt, run_h_task, run_h_task_async
+from brainy.h_task import H_PROMPT_TEMPLATE, build_h_prompt
 from brainy.stt import Summary, Transcript
-from brainy.stt.__main__ import main, run
+from brainy.stt.__main__ import build_h_prompt_from_results, main, run
 
 
 class PromptTests(unittest.TestCase):
@@ -20,181 +18,83 @@ class PromptTests(unittest.TestCase):
         self.assertIn("{summary}", H_PROMPT_TEMPLATE)
 
     def test_empty_transcript(self):
-        self.assertIn("(not available)", build_h_prompt("Task", " \n "))
+        for transcript in ("", " \n "):
+            self.assertIn("(not available)", build_h_prompt("Task", transcript))
 
-    def test_sdk_call_and_key_alias(self):
-        with patch.dict("os.environ", {"H_API_KEY": "test-key"}):
-            with patch("brainy.h_task.Client") as factory:
-                client = factory.return_value.__enter__.return_value
-                client.run_session.return_value = Mock(answer="Stopped before booking", error=None)
-                self.assertEqual(run_h_task("Task", "Words"), "Stopped before booking")
-        factory.assert_called_once_with(api_key="test-key")
-        client.run_session.assert_called_once_with(
-            agent="h/web-surfer-flash", messages=build_h_prompt("Task", "Words"),
-            timeout_seconds=600, max_time_s=600,
-        )
-        factory.return_value.__exit__.assert_called_once()
+    def test_latest_usable_summary(self):
+        summaries = [Summary(results="Old"), Summary(results="Latest"),
+                     Summary(results=" "), Summary(results="Failed", error="Addon failed")]
+        self.assertEqual(build_h_prompt_from_results(["Paris", "to Lyon"], summaries),
+                         build_h_prompt("Latest", "Paris\nto Lyon"))
 
-    def test_native_sdk_credentials_and_structured_answer(self):
-        with patch.dict("os.environ", {}, clear=True), patch("brainy.h_task.Client") as factory:
-            factory.return_value.__enter__.return_value.run_session.return_value = Mock(
-                answer={"result": "Done"}, error=None,
-            )
-            self.assertEqual(run_h_task("Task"), '{"result": "Done"}')
-            factory.assert_called_once_with()
+    def test_summary_without_transcript(self):
+        self.assertEqual(build_h_prompt_from_results([], [Summary(results="Task")]),
+                         build_h_prompt("Task"))
 
-    def test_empty_task_and_failed_sdk(self):
-        with patch("brainy.h_task.Client") as factory:
-            with self.assertRaisesRegex(ValueError, "empty task"):
-                run_h_task(" ")
-            factory.assert_not_called()
-            factory.side_effect = RuntimeError("secret-key")
-            with self.assertRaisesRegex(RuntimeError, "H task failed") as caught:
-                run_h_task("Task")
-            self.assertNotIn("secret-key", str(caught.exception))
+    def test_missing_failed_or_empty_summary_falls_back(self):
+        for summaries in ([], [Summary(error="Addon failed")], [Summary(results="  ")]):
+            with self.subTest(summaries=summaries):
+                self.assertEqual(build_h_prompt_from_results(["Paris", "to Lyon"], summaries),
+                                 build_h_prompt("Paris\nto Lyon", "Paris\nto Lyon"))
 
-    def test_missing_answer(self):
-        with patch("brainy.h_task.Client") as factory:
-            factory.return_value.__enter__.return_value.run_session.return_value = Mock(answer=None, error=None)
-            with self.assertRaisesRegex(RuntimeError, "no answer"):
-                run_h_task("Task")
+    def test_empty_results(self):
+        with self.assertRaisesRegex(ValueError, "cannot build an H prompt"):
+            build_h_prompt_from_results(["  "], [Summary(error="Addon failed")])
 
-    def test_dry_run_requires_handoff(self):
-        with patch("sys.argv", ["brainy.stt", "--dry-run"]), redirect_stderr(io.StringIO()):
-            with self.assertRaises(SystemExit) as caught:
-                main()
-        self.assertEqual(caught.exception.code, 2)
+    def test_main_returns_success_for_prompt_string(self):
+        with patch("sys.argv", ["brainy.stt", "--h-prompt"]):
+            with patch("brainy.stt.__main__.run", new=AsyncMock(return_value="Prompt")) as runner:
+                self.assertEqual(main(), 0)
+        self.assertTrue(runner.call_args.args[0].h_prompt)
 
 
 class HandoffTests(unittest.IsolatedAsyncioTestCase):
-    async def exercise(self, summary=None, dry_run=False, texts=("Paris", "to Lyon"), interrupt=False):
+    async def exercise(self, summaries=(), texts=("Paris", "to Lyon"), enabled=True, summary_type=None):
         args = argparse.Namespace(
-            summary=None, language=None, endpointing=None, max_utterance=None,
-            file="unused.wav", device=None, send_to_h=True, dry_run=dry_run,
+            summary=summary_type, language=None, endpointing=None, max_utterance=None,
+            file="unused.wav", device=None, h_prompt=enabled,
         )
 
         async def transcribe(audio, callback, stop, on_summary):
             callback(Transcript("Ignored partial", False, "0"))
             for index, text in enumerate(texts):
                 callback(Transcript(text, True, str(index)))
-            if summary is not None:
+            for summary in summaries:
                 on_summary(summary)
 
-        loops = []
         stdout, stderr = io.StringIO(), io.StringIO()
         with patch("brainy.stt.__main__.GladiaClient") as gladia:
             gladia.return_value.transcribe = AsyncMock(side_effect=transcribe)
-            with patch("brainy.h_task.AsyncClient") as h_client:
-                client = h_client.return_value.__aenter__.return_value
-                session = Mock(cancel=AsyncMock())
-                client.start_session = AsyncMock(return_value=session)
+            with redirect_stdout(stdout), redirect_stderr(stderr):
+                prompt = await run(args)
+        self.assertEqual(gladia.call_args.kwargs["summary_type"],
+                         summary_type or ("bullet_points" if enabled else None))
+        return prompt, stdout.getvalue(), stderr.getvalue()
 
-                async def answer(**kwargs):
-                    loops.append(asyncio.get_running_loop())
-                    if interrupt:
-                        signal.raise_signal(signal.SIGINT)
-                        await asyncio.Event().wait()
-                    return Mock(answer="Stopped at confirmation", error=None)
-
-                session.wait_for_completion = AsyncMock(side_effect=answer)
-                with redirect_stdout(stdout), redirect_stderr(stderr):
-                    code = await run(args)
-                if interrupt:
-                    self.assertEqual(code, 130)
-                    session.cancel.assert_awaited_once()
-                    self.assertIn("Cancelling the H task", stderr.getvalue())
-                else:
-                    session.cancel.assert_not_called()
-        self.assertEqual(gladia.call_args.kwargs["summary_type"], "bullet_points")
-        return stdout.getvalue(), stderr.getvalue(), client, loops
-
-    async def test_summary_handoff_uses_async_sdk(self):
-        stdout, _, client, loops = await self.exercise(Summary(results="Train to Lyon"))
-        self.assertIn("H prompt:", stdout)
-        self.assertIn("H answer:\nStopped at confirmation", stdout)
-        client.start_session.assert_called_once_with(
-            agent="h/web-surfer-flash", messages=build_h_prompt("Train to Lyon", "Paris\nto Lyon"),
-            max_time_s=600,
-        )
-        self.assertIs(loops[0], asyncio.get_running_loop())
-
-    async def test_ctrl_c_cancels_remote_h_session_promptly(self):
-        stdout, _, _, _ = await asyncio.wait_for(
-            self.exercise(Summary(results="Task"), interrupt=True), timeout=1,
-        )
+    async def test_prints_and_returns_prompt(self):
+        prompt, stdout, _ = await self.exercise([Summary(results="Train to Lyon")])
+        self.assertEqual(prompt, build_h_prompt("Train to Lyon", "Paris\nto Lyon"))
+        self.assertIn(f"H prompt:\n{prompt}", stdout)
+        self.assertNotIn("Ignored partial", prompt)
         self.assertNotIn("H answer:", stdout)
 
     async def test_missing_failed_or_empty_summary_falls_back(self):
-        for summary in (None, Summary(error="Addon failed"), Summary(results="  ")):
-            with self.subTest(summary=summary):
-                _, stderr, client, _ = await self.exercise(summary)
-                self.assertIn("using the final transcript", stderr)
-                self.assertEqual(client.start_session.call_args.kwargs["messages"],
-                                 build_h_prompt("Paris\nto Lyon", "Paris\nto Lyon"))
+        for summaries in ([], [Summary(error="Addon failed")], [Summary(results=" ")]):
+            with self.subTest(summaries=summaries):
+                prompt, _, _ = await self.exercise(summaries)
+                self.assertEqual(prompt, build_h_prompt("Paris\nto Lyon", "Paris\nto Lyon"))
 
-    async def test_dry_run_never_calls_h(self):
-        stdout, _, client, threads = await self.exercise(Summary(results="Task"), dry_run=True)
-        self.assertIn("H prompt:", stdout)
-        self.assertNotIn("H answer:", stdout)
-        client.start_session.assert_not_called()
-        self.assertEqual(threads, [])
+    async def test_explicit_summary_type_is_preserved(self):
+        await self.exercise([Summary(results="Task")], summary_type="concise")
 
-    async def test_empty_speech_does_not_send(self):
-        with self.assertRaisesRegex(ValueError, "nothing to send"):
+    async def test_no_flag_leaves_prompt_disabled(self):
+        prompt, stdout, _ = await self.exercise(enabled=False)
+        self.assertIsNone(prompt)
+        self.assertNotIn("H prompt:", stdout)
+
+    async def test_empty_speech_does_not_build_prompt(self):
+        with self.assertRaisesRegex(ValueError, "cannot build an H prompt"):
             await self.exercise(texts=())
-
-    async def test_h_timeout_cancels_remote_session(self):
-        with patch("brainy.h_task.AsyncClient") as factory:
-            client = factory.return_value.__aenter__.return_value
-            session = Mock(cancel=AsyncMock())
-            async def wait(**kwargs):
-                await asyncio.Event().wait()
-            session.wait_for_completion = AsyncMock(side_effect=wait)
-            client.start_session = AsyncMock(return_value=session)
-            with self.assertRaisesRegex(RuntimeError, "timed out"):
-                await run_h_task_async("Task", timeout_seconds=0.01)
-            session.cancel.assert_awaited_once()
-            self.assertEqual(client.start_session.call_args.kwargs["max_time_s"], 1)
-
-    async def test_cancel_during_creation_still_cancels_remote_session(self):
-        started = asyncio.Event()
-        release = asyncio.Event()
-        session = Mock(cancel=AsyncMock())
-
-        async def create(**kwargs):
-            started.set()
-            await release.wait()
-            return session
-
-        with patch("brainy.h_task.AsyncClient") as factory:
-            factory.return_value.__aenter__.return_value.start_session = AsyncMock(side_effect=create)
-            task = asyncio.create_task(run_h_task_async("Task"))
-            await started.wait()
-            task.cancel()
-            release.set()
-            with self.assertRaises(asyncio.CancelledError):
-                await asyncio.wait_for(task, timeout=1)
-            session.cancel.assert_awaited_once()
-
-    async def test_failed_remote_cancel_is_reported_safely(self):
-        started = asyncio.Event()
-        async def wait(**kwargs):
-            started.set()
-            await asyncio.Event().wait()
-
-        session = Mock(cancel=AsyncMock(side_effect=RuntimeError("secret-key")),
-                       wait_for_completion=AsyncMock(side_effect=wait))
-        with patch("brainy.h_task.AsyncClient") as factory:
-            factory.return_value.__aenter__.return_value.start_session = AsyncMock(return_value=session)
-            stderr = io.StringIO()
-            with redirect_stderr(stderr):
-                task = asyncio.create_task(run_h_task_async("Task"))
-                await started.wait()
-                task.cancel()
-                with self.assertRaises(asyncio.CancelledError):
-                    await asyncio.wait_for(task, timeout=1)
-            self.assertIn("Could not confirm remote H cancellation", stderr.getvalue())
-            self.assertNotIn("secret-key", stderr.getvalue())
 
 
 if __name__ == "__main__":
