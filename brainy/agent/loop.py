@@ -3,25 +3,25 @@ import re
 
 from .events import AgentError, AgentStep, ConfirmRequest, Done, NeedsUser
 from .debug import debug_log
-from .browser import normalize_choice
+from .browser import SECRET_QUESTION, SecretFieldError, normalize_choice
 
 
 RISKY = re.compile(r"pay|payer|submit|envoyer|valider|book|réserver|confirm|acheter|order|commander", re.I)
-SECRET_QUESTION = re.compile(r"\b(?:password|mot\s+de\s+passe|card|carte|cvv|cvc|code|pin|iban|otp|sms)\b", re.I)
 
 
 class WebAgent:
-    def __init__(self, client, browser, ask, max_steps=25, debug=False, choices=None):
+    def __init__(self, client, browser, ask, max_steps=25, debug=False, choices=None, pending_actions=None):
         self.client = client
         self.browser = browser
         self.ask = ask
         self.max_steps = max_steps
         self.debug = debug
-        self.choices = list(choices or [])
+        self.pending_actions = (list(pending_actions) if pending_actions is not None else
+                                [("choose", text) for text in choices or []])
 
     async def run(self, goal, start_url=None):
         history = []
-        choices = self.choices.copy()
+        queue = self.pending_actions.copy()
         pending = None
         last_key = None
         unchanged_count = 0
@@ -52,18 +52,41 @@ class WebAgent:
                         history.append(f"Your last {key[0]} on '{target}' had no visible effect; do not repeat it, "
                                        "try a different approach (e.g. results may already be shown, scroll, "
                                        "choose a suggestion first, or ask the user).")
-                if choices and not RISKY.search(choices[0]):
-                    text = choices[0]
+                if queue and queue[0][0] == "fill":
+                    _, field, text = queue[0]
+                    step = "type"
+                    try:
+                        element = await self.browser.find_fill(field)
+                        value = await self.browser.fill_field(element, text) if element is not None else None
+                    except SecretFieldError:
+                        warning = "Skipped secret-like fill field; complete it manually."
+                        yield AgentStep(warning, "fill")
+                        history.append(warning)
+                        queue.pop(0)
+                        continue
+                    if value is not None:
+                        yield AgentStep(f"Typing {text}.", "type")
+                        history.append(f"Filled {field!r} directly; field now contains {value!r}. "
+                                       "Choose a matching autocomplete suggestion before searching.")
+                        queue.pop(0)
+                        pending = (("type", normalize_choice(field)), signature, field)
+                        continue
+                if queue and queue[0][0] == "choose" and not RISKY.search(queue[0][1]):
                     step = "select_text"
-                    element = await self.browser.find_choice(text)
-                    if element is not None:
-                        result = await self.browser.select_choice(element, text)
-                        if result is not None:
-                            yield AgentStep(f"Selecting {text}.", "select_text")
-                            history.extend([f"Selected {text} directly", result])
-                            choices.pop(0)
-                            pending = (("select_text", " ".join(text.casefold().split())), signature, text)
-                            continue
+                    selected = False
+                    for text in queue[0][1].split("|"):
+                        element = await self.browser.find_choice(text.strip())
+                        if element is not None:
+                            result = await self.browser.select_choice(element, text.strip())
+                            if result is not None:
+                                yield AgentStep(f"Selecting {text.strip()}.", "select_text")
+                                history.extend([f"Selected {text.strip()} directly", result])
+                                queue.pop(0)
+                                pending = (("select_text", " ".join(text.casefold().split())), signature, text)
+                                selected = True
+                                break
+                    if selected:
+                        continue
                 step = "model call"
                 action = await self.client.decide(screenshot, goal, history, page_context=page_context)
                 target = action.text if action.action == "select_text" else action.target
@@ -115,9 +138,10 @@ class WebAgent:
                         await self.browser.click(x, y)
                         result = f"Clicked {action.text!r} using grounding; inspect next screenshot for selection state."
                     history.append(result)
-                    for index, choice in enumerate(choices):
-                        if normalize_choice(choice) == normalize_choice(action.text):
-                            choices.pop(index)
+                    for index, item in enumerate(queue):
+                        if item[0] == "choose" and any(normalize_choice(choice) == normalize_choice(action.text)
+                                                       for choice in item[1].split("|")):
+                            queue.pop(index)
                             break
                 elif action.action in {"click", "confirm", "type"}:
                     step = "model call"
@@ -142,6 +166,8 @@ class WebAgent:
                             continue
                         history.append(("Field now contains " + repr(value) if value else "Field empty") +
                                        ". If a suggestion list appeared, click the matching suggestion before searching.")
+                        if queue and queue[0][0] == "fill" and normalize_choice(queue[0][2]) == normalize_choice(action.text):
+                            queue.pop(0)
                 elif action.action == "scroll":
                     step = "scroll"
                     await self.browser.scroll(action.text)
