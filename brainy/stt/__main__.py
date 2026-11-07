@@ -3,6 +3,7 @@
 import argparse
 import asyncio
 import os
+import re
 import signal
 import sys
 import wave
@@ -110,15 +111,11 @@ def duration_type(minimum, maximum):
     return parse
 
 
-def main():
-    parser = argparse.ArgumentParser(description="Stream microphone or WAV audio to Gladia live STT.")
+def add_audio_arguments(parser, *, summary_default=None):
     parser.add_argument("--language", action="append", metavar="CODE",
                         help="ISO language code; repeat for code switching (e.g. fr and en). Default: auto-detect.")
-    parser.add_argument("--list-devices", action="store_true", help="List audio devices without an API key.")
-    parser.add_argument("--summary", choices=("general", "bullet_points", "concise"),
-                        help="Print a post-session summary (default: disabled).")
-    parser.add_argument("--h-prompt", action="store_true",
-                        help="Print a prompt for a future H agent without calling H (enables summarization).")
+    parser.add_argument("--summary", choices=("general", "bullet_points", "concise"), default=summary_default,
+                        help=f"Print a post-session summary (default: {summary_default or 'disabled'}).")
     parser.add_argument("--endpointing", type=duration_type(0.01, 10), metavar="SECONDS",
                         help="Silence ending an utterance: 0.01–10 seconds (API default: 0.05).")
     parser.add_argument("--max-utterance", type=duration_type(5, 60), metavar="SECONDS",
@@ -126,6 +123,25 @@ def main():
     source = parser.add_mutually_exclusive_group()
     source.add_argument("--device", help="Microphone device index or name (default: system input).")
     source.add_argument("--file", metavar="PATH.wav", help="Stream a 16 kHz mono 16-bit PCM WAV in real time.")
+
+
+def error_message(exc):
+    # Transport exceptions can contain the signed session URL; never print it.
+    if isinstance(exc, ModuleNotFoundError):
+        message = f"Missing Python package '{exc.name}'. Run: pip install -r requirements.txt"
+    elif isinstance(exc, (ValueError, RuntimeError, OSError, wave.Error)):
+        message = str(exc)
+    else:
+        message = f"{type(exc).__name__}: check connectivity, audio device and Gladia configuration."
+    return re.sub(r"(?i)wss?://[^\s\"'<>]+", "[REDACTED URL]", message)
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Stream microphone or WAV audio to Gladia live STT.")
+    add_audio_arguments(parser)
+    parser.add_argument("--list-devices", action="store_true", help="List audio devices without an API key.")
+    parser.add_argument("--h-prompt", action="store_true",
+                        help="Print a prompt for a future H agent without calling H (enables summarization).")
     args = parser.parse_args()
     load_dotenv()
     try:
@@ -141,14 +157,7 @@ def main():
     except KeyboardInterrupt:
         return 130
     except Exception as exc:
-        # Transport exceptions can contain the signed session URL; never print it.
-        if isinstance(exc, ModuleNotFoundError):
-            message = f"Missing Python package '{exc.name}'. Run: pip install -r requirements.txt"
-        elif isinstance(exc, (ValueError, RuntimeError, OSError, wave.Error)):
-            message = str(exc)
-        else:
-            message = f"{type(exc).__name__}: check connectivity, audio device and Gladia configuration."
-        print(f"Error: {message}", file=sys.stderr)
+        print(f"Error: {error_message(exc)}", file=sys.stderr)
         return 1
 
 

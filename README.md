@@ -154,9 +154,9 @@ Reuse `brainy.stt.GladiaClient.transcribe(audio, callback, stop)` with an async 
 ## Voice prompt for a future H agent
 > *Prompt vocal pour un futur agent H*
 
-Use `--h-prompt` to prepare and print a task prompt after the speech session ends. It enables bullet-point summarization unless `--summary` specifies another type, includes all final utterances verbatim, and falls back to the transcript if no usable summary arrives. Empty input produces an error. This only generates text: it does not call H, require an H key or execute a task. Gladia still requires `GLADIA_API_KEY` and may incur charges.
+Use `--h-prompt` to prepare and print a task prompt after the speech session ends. It enables bullet-point summarization unless `--summary` specifies another type and falls back to the joined final transcript if no usable summary arrives. The current template includes the summary, not a separate verbatim transcript section. Empty input produces an error. This only generates text: it does not call H, require an H key or execute a task. Gladia still requires `GLADIA_API_KEY` and may incur charges.
 
-> *Utilisez `--h-prompt` pour préparer et afficher un prompt de tâche après la session vocale. Cette option active le résumé en points sauf si `--summary` indique un autre type, inclut tous les énoncés définitifs mot pour mot et utilise la transcription si aucun résumé exploitable n'arrive. Une entrée vide produit une erreur. Seul du texte est généré : aucun appel à H, aucune clé H et aucune exécution de tâche. Gladia nécessite toujours `GLADIA_API_KEY` et peut entraîner des frais.*
+> *Utilisez `--h-prompt` pour préparer et afficher un prompt de tâche après la session vocale. Cette option active le résumé en points sauf si `--summary` indique un autre type et utilise les énoncés définitifs joints si aucun résumé exploitable n'arrive. Le modèle actuel inclut le résumé, sans section séparée de transcription mot pour mot. Une entrée vide produit une erreur. Seul du texte est généré : aucun appel à H, aucune clé H et aucune exécution de tâche. Gladia nécessite toujours `GLADIA_API_KEY` et peut entraîner des frais.*
 
 ```sh
 python -m brainy.stt --language fr --language en --h-prompt
@@ -166,6 +166,22 @@ python -m brainy.stt --file sample.wav --summary concise --h-prompt
 Press Ctrl+C once and wait for the final results and prompt. The prompt contains private speech content and is printed to stdout. Reuse `brainy.h_task.build_h_prompt(summary, transcript="")` for explicit text, or `brainy.stt.__main__.build_h_prompt_from_results(final_utterances, summaries)` to select a summary and join final utterances. The async CLI `run(args)` also returns the generated prompt string when enabled. The supplied prompt asks a future agent to request missing details and stop before final purchases, bookings, payments or submissions; these are instructions, not an enforced approval gate.
 
 > *Appuyez une seule fois sur Ctrl+C et attendez les résultats définitifs et le prompt. Le prompt contient le contenu privé de la parole et est affiché sur la sortie standard. Réutilisez `brainy.h_task.build_h_prompt(summary, transcript="")` pour du texte explicite, ou `brainy.stt.__main__.build_h_prompt_from_results(final_utterances, summaries)` pour sélectionner un résumé et joindre les énoncés définitifs. La fonction asynchrone `run(args)` de la CLI renvoie aussi le prompt généré lorsque l'option est activée. Le prompt fourni demande au futur agent de poser les questions nécessaires et de s'arrêter avant tout achat, réservation, paiement ou envoi définitif ; ce sont des instructions, pas un verrou de validation imposé par le code.*
+
+## End-to-end: speak → H web agent
+> *De bout en bout : parler → agent web H*
+
+Set `GLADIA_API_KEY` and `H_API_KEY` in your environment or `.env` before starting; both are checked before recording. Install the requirements and Playwright's Chromium (`python -m playwright install chromium`), then run:
+
+> *Renseignez `GLADIA_API_KEY` et `H_API_KEY` dans l'environnement ou `.env` avant de commencer ; les deux clés sont vérifiées avant l'enregistrement. Installez les dépendances et Chromium pour Playwright (`python -m playwright install chromium`), puis lancez :*
+
+```sh
+python -m brainy
+python -m brainy --language fr --language en --channel chrome --url https://www.google.com
+```
+
+Speak, then press Ctrl+C once to stop recording and wait for final transcripts and the summary. Brainy builds the same prompt as `python -m brainy.stt --h-prompt`, then passes it to the existing local Playwright/Holo web agent. Steps and results print in the terminal; follow-up questions and confirmations use typed input. Ctrl+C during the agent phase quits with code 130. The browser stays open until Enter unless `--headless` is set. Audio options (`--file`, `--device`, `--summary`, `--endpointing`, `--max-utterance`) and agent options (`--model`, `--profile-dir`, `--debug`) are also available. No hosted H SDK is used; the agent still calls Holo, and speech/browser content may be shared with the respective services.
+
+> *Parlez, puis appuyez une fois sur Ctrl+C pour arrêter l'enregistrement et attendre la transcription définitive et le résumé. Brainy construit le même prompt que `python -m brainy.stt --h-prompt`, puis le transmet à l'agent web local Playwright/Holo existant. Les étapes et résultats s'affichent dans le terminal ; les questions et confirmations se font au clavier. Ctrl+C pendant la phase agent quitte avec le code 130. Le navigateur reste ouvert jusqu'à Entrée, sauf avec `--headless`. Les options audio (`--file`, `--device`, `--summary`, `--endpointing`, `--max-utterance`) et agent (`--model`, `--profile-dir`, `--debug`) sont aussi disponibles. Aucun SDK H hébergé n'est utilisé ; l'agent appelle toujours Holo, et le contenu vocal ou du navigateur peut être partagé avec les services concernés.*
 
 ## Web agent (H Company)
 > *Agent web (H Company)*

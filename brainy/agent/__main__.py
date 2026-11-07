@@ -4,6 +4,7 @@ import argparse
 import asyncio
 import os
 import signal
+import threading
 
 from dotenv import load_dotenv
 
@@ -14,15 +15,38 @@ from .holo import HoloClient
 from .loop import WebAgent
 
 
-async def run(args):
-    async def ask(question):
-        return await asyncio.to_thread(input, question + " ")
+async def ask(question):
+    loop = asyncio.get_running_loop()
+    answer = loop.create_future()
+
+    def finish(value, error):
+        if not answer.done():
+            if error is not None:
+                answer.set_exception(error)
+            else:
+                answer.set_result(value)
+
+    def read():
+        try:
+            value, error = input(question + " "), None
+        except Exception as exc:
+            value, error = None, exc
+        try:
+            loop.call_soon_threadsafe(finish, value, error)
+        except RuntimeError:
+            pass
+
+    threading.Thread(target=read, daemon=True).start()
+    return await answer
+
+
+async def run_goal(goal, args):
 
     client = HoloClient(os.getenv("H_API_KEY", ""), args.model)
     async with Browser(headless=args.headless, profile_dir=args.profile_dir,
                        channel=args.channel, debug=args.debug) as browser:
         status = 0
-        async for event in WebAgent(client, browser, ask, debug=args.debug).run(args.goal, args.url):
+        async for event in WebAgent(client, browser, ask, debug=args.debug).run(goal, args.url):
             if isinstance(event, AgentStep):
                 print(event.narration, flush=True)
             elif isinstance(event, Done):
@@ -41,25 +65,37 @@ async def run(args):
     return status
 
 
-def main():
-    load_dotenv()
-    parser = argparse.ArgumentParser(description="Brainy's controlled H Company web agent (no microphone).")
-    parser.add_argument("goal")
+async def run(args):
+    return await run_goal(args.goal, args)
+
+
+def add_agent_arguments(parser):
     parser.add_argument("--url")
     parser.add_argument("--model", default=os.getenv("H_MODEL") or "holo3-1-35b-a3b")
     parser.add_argument("--headless", action="store_true")
     parser.add_argument("--channel", help="Installed browser channel, e.g. chrome or msedge (default: bundled Chromium).")
     parser.add_argument("--debug", action="store_true", help="Local exception and page lifecycle diagnostics on stderr.")
     parser.add_argument("--profile-dir", help="Optional persistent browser profile; contains private browsing data.")
+
+
+def startup_error(exc, args):
+    if args.debug:
+        debug_log(f"startup: {type(exc).__module__}.{type(exc).__name__}: {exc}")
+    print("Unable to start. Check H_API_KEY, dependencies and Chromium installation.")
+
+
+def main():
+    load_dotenv()
+    parser = argparse.ArgumentParser(description="Brainy's controlled H Company web agent (no microphone).")
+    parser.add_argument("goal")
+    add_agent_arguments(parser)
     args = parser.parse_args()
     try:
         return asyncio.run(run(args))
     except KeyboardInterrupt:
         return 130
     except Exception as exc:
-        if args.debug:
-            debug_log(f"startup: {type(exc).__module__}.{type(exc).__name__}: {exc}")
-        print("Unable to start. Check H_API_KEY, dependencies and Chromium installation.")
+        startup_error(exc, args)
         return 1
 
 
