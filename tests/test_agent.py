@@ -13,7 +13,7 @@ from brainy.agent.debug import debug_log
 from brainy.agent.__main__ import run
 from brainy.agent.events import AgentError, ConfirmRequest, Done, NeedsUser
 from brainy.agent.holo import Action, HoloClient, parse_action, parse_click
-from brainy.agent.loop import WebAgent
+from brainy.agent.loop import OUT_OF_BUDGET, WRAP_UP, WebAgent
 
 
 class ParsingTests(unittest.TestCase):
@@ -82,6 +82,35 @@ class AgentTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.client.decide.await_count, 2)
         self.assertIsInstance(events[-1], AgentError)
         self.assertIn("step limit", events[-1].reason)
+
+    async def run_budget(self, actions, **options):
+        self.browser.screenshot.side_effect = (bytes([i]) for i in range(100))
+        histories, queue = [], list(actions)
+        async def decide(screenshot, goal, history, page_context=None):
+            histories.append(list(history))
+            return queue.pop(0)
+        self.client.decide.side_effect = decide
+        agent = WebAgent(self.client, self.browser, self.ask, max_steps=10, **options)
+        return [event async for event in agent.run("test")], histories
+
+    async def test_search_budget_nudges_then_asks(self):
+        events, histories = await self.run_budget([Action("scroll", text="down")] * 6,
+                                                  wrap_up_steps=2, wrap_up_grace=2)
+        self.assertNotIn(WRAP_UP, histories[1])
+        self.assertIn(WRAP_UP, histories[2])
+        self.assertEqual(len(histories), 5)
+        self.assertEqual([e.question for e in events if isinstance(e, NeedsUser)], [OUT_OF_BUDGET])
+        self.assertEqual(self.browser.scroll.await_count, 4)
+        self.assertIsInstance(events[-1], Done)
+
+    async def test_search_budget_resets_after_answer(self):
+        self.ask.return_value = "continue"
+        events, histories = await self.run_budget(
+            [Action("scroll", text="down")] * 2 + [Action("ask_user", text="Mardi ?")]
+            + [Action("scroll", text="down")] * 2 + [Action("done", text="ok")],
+            wrap_up_seconds=0, wrap_up_grace=5)
+        self.assertEqual([h.count(WRAP_UP) for h in histories], [1, 1, 1, 2, 2, 2])
+        self.assertIsInstance(events[-1], Done)
 
     async def test_repeat_warning_after_two_unchanged_actions(self):
         histories = []

@@ -160,10 +160,13 @@ class HelperTests(unittest.TestCase):
         self.assertTrue(app_module.YES.search("Oui, parfait, merci !"))
         self.assertFalse(app_module.YES.search("Non"))
         self.assertTrue(app_module.NO.search("non merci"))
+        for text in ("On s'arrête là.", "arrêter", "Laisse tomber"):
+            self.assertTrue(app_module.NO.search(text), text)
 
 
 class FrenchTests(unittest.TestCase):
     def test_stuck_question_is_translated(self):
+        self.assertIn("Je continue", app_module.french_question(app_module.OUT_OF_BUDGET))
         q = app_module.french_question("I'm stuck: repeating 'Bouton Rechercher' has no visible effect. Should I try?")
         self.assertIn("Je bloque", q)
         self.assertIn("Bouton Rechercher", q)

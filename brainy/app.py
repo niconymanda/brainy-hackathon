@@ -26,7 +26,7 @@ from websockets.http11 import Response
 from brainy.agent.browser import Browser
 from brainy.agent.events import AgentError, AgentStep, ConfirmRequest, Done, NeedsUser
 from brainy.agent.holo import HoloClient
-from brainy.agent.loop import WebAgent
+from brainy.agent.loop import OUT_OF_BUDGET, WebAgent
 from brainy.h_task import build_h_prompt
 
 DIST = Path(__file__).resolve().parents[1] / "frontend" / "dist"
@@ -42,9 +42,11 @@ SITES = {
     "amazon": "https://www.amazon.fr",
 }
 YES = re.compile(r"^\W*(oui|yes|ouais|vas-y|go|ok|okay|d'accord|parfait|c'est bon|confirme)\b", re.I)
-NO = re.compile(r"^\W*(non|no|stop|arrête|annule)\b", re.I)
+NO = re.compile(r"^\W*(non|no|stop|arr[êe]t\w*|annule|on s['’]arr[êe]te|laisse tomber)\b", re.I)
 FRENCH = ("\nLanguage: write every narration and question in French, as one short spoken sentence "
           "addressed to the user (tutoiement).")
+BUDGET = ("\nSearch limit: if nothing matches every constraint after checking about 3 practitioners or dates, "
+          "stop searching and use ask_user to propose the closest option, saying which constraint it does not meet.")
 SITE_TIPS = {
     "doctolib": ("\nDoctolib tip: to search, navigate directly to https://www.doctolib.fr/<specialty>/<city> "
                  "(lowercase, hyphens, e.g. https://www.doctolib.fr/dermatologue/paris) instead of the search bar. "
@@ -58,6 +60,8 @@ def french_question(text):
     if stuck:
         return (f"Je bloque : « {stuck.group(1)} » ne donne rien. "
                 "Je tente autre chose ? Ou fais-le à la main et dis-moi « ok ».")
+    if text == OUT_OF_BUDGET:
+        return "Ça prend plus de temps que prévu. Je continue, ou on s'arrête là ?"
     return text
 
 
@@ -259,12 +263,15 @@ class Session:
             key = os.getenv("H_API_KEY") or os.getenv("HCOMPANY_API_KEY", "")
             client = HoloClient(key, self.app.args.model)
             browser = await self.app.get_browser()
-            goal = build_h_prompt(request, request) + FRENCH + site_tips(request)
-            agent = WebAgent(client, browser, self.ask, max_steps=self.app.args.max_steps)
+            goal = build_h_prompt(request, request) + FRENCH + BUDGET + site_tips(request)
+            args = self.app.args
+            agent = WebAgent(client, browser, self.ask, max_steps=args.max_steps,
+                             wrap_up_steps=getattr(args, "search_steps", None),
+                             wrap_up_seconds=getattr(args, "search_seconds", None))
             async for event in agent.run(goal, start_url_for(request)):
                 if isinstance(event, AgentStep):
                     if event.action not in {"done", "ask_user", "confirm"}:
-                        self.emit(type="agent_step", narration=event.narration, action=event.action)
+                        self.emit(type="agent_step", narration=event.narration or "Je continue.", action=event.action)
                 elif isinstance(event, NeedsUser):
                     self.emit(type="needs_user", question=french_question(event.question))
                 elif isinstance(event, ConfirmRequest):
@@ -369,6 +376,10 @@ def main():
                         help="Installed browser for the agent (chrome, msedge); falls back to bundled Chromium.")
     parser.add_argument("--model", default=os.getenv("H_MODEL") or "holo3-1-35b-a3b")
     parser.add_argument("--max-steps", type=int, default=40)
+    parser.add_argument("--search-steps", type=int, default=int(os.getenv("BRAINY_SEARCH_STEPS", "12")),
+                        help="Steps without user input before Brainy stops searching and proposes the best option.")
+    parser.add_argument("--search-seconds", type=float, default=float(os.getenv("BRAINY_SEARCH_SECONDS", "120")),
+                        help="Same limit in seconds.")
     parser.add_argument("--login", metavar="URL", nargs="?", const="https://www.doctolib.fr/sessions/new",
                         help="Only open the agent's browser to sign in to a site once (default: Doctolib).")
     args = parser.parse_args()
