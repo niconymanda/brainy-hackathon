@@ -48,9 +48,9 @@ class GladiaClient:
     """
 
     def __init__(
-        self, 
-        api_key: str, 
-        languages: Sequence[str] = "en", 
+        self,
+        api_key: str,
+        languages: Sequence[str] = ("fr",),
         *,
         summary_type: SummaryType | None = None,
         endpointing: float | None = None,
