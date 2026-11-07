@@ -52,6 +52,8 @@ AUTONOMY = ("\nAutonomy: the user is delegating and does not want to be interrup
             "as correct, keep prefilled fields and continue without asking. Make reasonable choices yourself (first "
             "available slot matching the request, the visit reason closest to the request). Use ask_user only when a "
             "required choice truly cannot be inferred from the request or the account (e.g. which family member). "
+            "Never invent personal data that is not in the request, the account or the user's answers (e.g. birth "
+            "place, social security number): ask the user for it. "
             "If there is only one option (e.g. a single patient profile), select it. The specialty or category the "
             "user named is settled: never ask about it. Never ask to confirm intermediate steps; use confirm only for "
             "the final irreversible button (e.g. 'Confirmer le rendez-vous', 'Payer').")

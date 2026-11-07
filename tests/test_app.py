@@ -107,6 +107,7 @@ class AppTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("agent_step", kinds)
             self.assertEqual(self.browser.visited, ["https://www.doctolib.fr"])
             self.assertIn("profile data", FakeHolo.goal)
+            self.assertIn("Never invent personal data", FakeHolo.goal)
             self.assertEqual(self.browser.clicks, 1)
             await ws.send(json.dumps({"type": "confirm", "answer": "oui"}))
             events = await self.recv_until(ws, "history")
