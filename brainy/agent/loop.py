@@ -87,7 +87,7 @@ class WebAgent:
                 question = None
                 if action.action == "done":
                     result = action.text or action.narration
-                    if not result.rstrip().endswith("?"):
+                    if "?" not in result:
                         yield Done(result)
                         return
                     question = result

@@ -69,6 +69,7 @@ class AppTests(unittest.IsolatedAsyncioTestCase):
         self.browser = FakeBrowser()
         patches = [
             patch.object(app_module, "HISTORY_FILE", Path(self.tmp.name) / "history.json"),
+            patch.object(app_module, "PROFILE_FILE", Path(self.tmp.name) / "profil.txt"),
             patch.object(app_module, "HoloClient", FakeHolo),
             patch.object(app_module.BrainyApp, "get_browser", self.fake_browser),
         ]
@@ -217,6 +218,19 @@ class HelperTests(unittest.TestCase):
     def test_start_url(self):
         self.assertEqual(app_module.start_url_for("Prends-moi un RDV sur Doctolib"), "https://www.doctolib.fr")
         self.assertIsNone(app_module.start_url_for("Réserve un restaurant"))
+
+    async def test_profile_reaches_the_goal(self):
+        (Path(self.tmp.name) / "profil.txt").write_text(
+            app_module.PROFILE_TEMPLATE.replace("Ville de naissance :", "Ville de naissance : Lyon"), encoding="utf-8")
+        async with connect("ws://127.0.0.1:8799/ws") as ws:
+            await ws.recv()
+            await ws.send(json.dumps({"type": "user_text", "text": "Un dermato sur Doctolib samedi"}))
+            await self.recv_until(ws, "confirm_request")
+            self.assertIn("never ask for it):\n- Ville de naissance : Lyon", FakeHolo.goal)
+            self.assertNotIn("Prénom", FakeHolo.goal)
+            self.assertNotIn("carte bancaire", FakeHolo.goal)
+            await ws.send(json.dumps({"type": "confirm", "answer": "non"}))
+            await self.recv_until(ws, "done")
 
     def test_goal_carries_request_and_date(self):
         goal = app_module.brainy_goal("Un dermato mardi vers 13h", datetime(2026, 11, 7))

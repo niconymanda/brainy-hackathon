@@ -17,9 +17,10 @@ Prérequis : Python 3.10+ (`brew install python@3.12`), Node 18+, Google Chrome.
 ./Brainy.command            # 1er lancement : installe tout, puis ouvre la fenêtre Brainy
 ./scripts/make_mac_app.sh   # optionnel : crée ~/Applications/Brainy.app avec l'icône (à mettre dans le Dock)
 ./Connexion.command         # une seule fois : ouvre le navigateur de Brainy pour te connecter à Doctolib
+./Profil.command            # une seule fois : ta fiche (date et ville de naissance, adresse…) pour que l'agent ne te la demande jamais
 ```
 
-Windows : `Brainy.bat` et `Connexion.bat` (même rôle ; `frontend\dist` doit déjà être construit). Le navigateur de l'agent garde ses sessions dans `~/.brainy/chrome-profile` : on se connecte une fois, jamais de mot de passe stocké par Brainy. Raccourci global : **Ctrl+Alt+H**.
+Windows : `Brainy.bat`, `Connexion.bat` et `Profil.bat` (même rôle ; `frontend\dist` doit déjà être construit). Le navigateur de l'agent garde ses sessions dans `~/.brainy/chrome-profile` : on se connecte une fois, jamais de mot de passe stocké par Brainy. La fiche profil est dans `~/.brainy/profil.txt` (hors du dépôt) et est envoyée à l'agent avec chaque demande. Raccourci global : **Ctrl+Alt+H**.
 
 Appuie sur **H** (ou le micro), parle, Brainy s'arrête tout seul quand tu te tais. L'agent ouvre Chrome à côté. Au premier lancement, macOS demande l'accès au micro (et éventuellement à « Accessibilité » pour le terminal). Détails du contrat : `frontend/context/05-interface-back.md`.
 

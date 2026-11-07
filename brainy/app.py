@@ -31,6 +31,21 @@ from brainy.agent.loop import OUT_OF_BUDGET, SECRET_QUESTION, WebAgent
 DIST = Path(__file__).resolve().parents[1] / "frontend" / "dist"
 HOME = Path(os.getenv("BRAINY_HOME", Path.home() / ".brainy"))
 HISTORY_FILE = HOME / "history.json"
+PROFILE_FILE = HOME / "profil.txt"
+PROFILE_TEMPLATE = """# Ta fiche Brainy : l'agent s'en sert pour remplir les formulaires sans te poser de questions.
+# Elle reste sur cet ordinateur. N'y mets jamais de mot de passe ni de carte bancaire.
+# Complete apres les deux-points, enregistre (Ctrl+S) et ferme.
+Prénom :
+Nom :
+Nom de naissance :
+Date de naissance :
+Ville de naissance :
+Pays de naissance :
+Sexe :
+Adresse :
+Téléphone :
+E-mail :
+"""
 
 SITES = {
     "doctolib": "https://www.doctolib.fr",
@@ -90,6 +105,32 @@ def obvious_question(question):
     """Yes/no check-ins the agent should settle itself; open questions, secrets and the budget check go to the user."""
     return (bool(OBVIOUS.search(question)) and not OPEN_QUESTION.search(question)
             and not SECRET_QUESTION.search(question) and question != french_question(OUT_OF_BUDGET))
+
+
+def load_profile():
+    try:
+        lines = PROFILE_FILE.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return ""
+    facts = [line.strip() for line in lines
+             if line.strip() and not line.lstrip().startswith("#") and line.split(":", 1)[-1].strip()]
+    if not facts:
+        return ""
+    return ("\nThe user's profile (use it to fill forms, never ask for it):\n- " + "\n- ".join(facts))
+
+
+def open_profile():
+    """Create the profile file from the template if needed and open it in a text editor."""
+    HOME.mkdir(parents=True, exist_ok=True)
+    if not PROFILE_FILE.exists():
+        PROFILE_FILE.write_text(PROFILE_TEMPLATE, encoding="utf-8")
+    if sys.platform == "win32":
+        os.startfile(PROFILE_FILE)
+    elif sys.platform == "darwin":
+        os.system(f"open -t '{PROFILE_FILE}'")
+    else:
+        os.system(f"xdg-open '{PROFILE_FILE}'")
+    print(f"Fiche profil : {PROFILE_FILE}")
 
 
 def brainy_goal(request, now=None):
@@ -311,7 +352,7 @@ class Session:
             key = os.getenv("H_API_KEY") or os.getenv("HCOMPANY_API_KEY", "")
             client = HoloClient(key, self.app.args.model)
             browser = await self.app.get_browser()
-            goal = brainy_goal(request) + FRENCH + AUTONOMY + BUDGET + site_tips(request)
+            goal = brainy_goal(request) + load_profile() + FRENCH + AUTONOMY + BUDGET + site_tips(request)
             args = self.app.args
             agent = WebAgent(client, browser, self.ask, max_steps=args.max_steps,
                              wrap_up_steps=getattr(args, "search_steps", None),
@@ -439,6 +480,8 @@ def main():
                         help="Same limit in seconds.")
     parser.add_argument("--login", metavar="URL", nargs="?", const="https://www.doctolib.fr/sessions/new",
                         help="Only open the agent's browser to sign in to a site once (default: Doctolib).")
+    parser.add_argument("--profile", action="store_true",
+                        help="Open the profile file (birth date, address...) the agent uses to fill forms.")
     args = parser.parse_args()
     args.language = args.language or ["fr"]
     if args.device and args.device.isdecimal():
@@ -446,6 +489,9 @@ def main():
 
     if args.login:
         asyncio.run(login(args))
+        return 0
+    if args.profile:
+        open_profile()
         return 0
 
     ready = threading.Event()
