@@ -151,6 +151,22 @@ Reuse `brainy.stt.GladiaClient.transcribe(audio, callback, stop)` with an async 
 
 > *Réutilisez `brainy.stt.GladiaClient.transcribe(audio, callback, stop)` avec un générateur asynchrone de blocs PCM, un callback synchrone recevant des objets `Transcript` (`text`, `is_final`, `utterance_id`, `language`) et, éventuellement, un `asyncio.Event` pour l'arrêt propre. Les options du client sont `summary_type`, `endpointing` et `maximum_duration_without_endpointing` ; `transcribe(..., on_summary=callback)` reçoit un objet `Summary` contenant `results` ou `error`. Les sources audio sont dans `brainy/stt/audio.py` ; la CLI est dans `brainy/stt/__main__.py`. Lancez les tests hors ligne avec `python -m unittest discover -s tests -v`.*
 
+## Voice handoff to H Company
+> *Transmission de la demande vocale à H Company*
+
+Install `requirements.txt` and set `GLADIA_API_KEY` plus `H_API_KEY` in `.env` (copy `.env.example`). The H SDK also accepts its native `HAI_API_KEY` or saved `holo login` credentials when `H_API_KEY` is unset. `--send-to-h` enables bullet-point summarization unless `--summary` specifies another type. After graceful stop, Brainy prints the prompt, sends the summary and all final utterances to `h/web-surfer-flash`, and prints its answer. If summarization fails or is empty, the final transcript is used instead; empty input is not sent.
+
+> *Installez `requirements.txt` et renseignez `GLADIA_API_KEY` et `H_API_KEY` dans `.env` (copiez `.env.example`). Le SDK H accepte aussi `HAI_API_KEY` ou les identifiants enregistrés par `holo login` si `H_API_KEY` n'est pas défini. `--send-to-h` active le résumé en points, sauf si `--summary` indique un autre type. Après l'arrêt propre, Brainy affiche le prompt, transmet le résumé et tous les énoncés définitifs à `h/web-surfer-flash`, puis affiche sa réponse. Si le résumé échoue ou est vide, la transcription définitive le remplace ; une demande vide n'est pas envoyée.*
+
+```sh
+python -m brainy.stt --language fr --language en --send-to-h
+python -m brainy.stt --file sample.wav --send-to-h --dry-run
+```
+
+Press Ctrl+C once and wait for the handoff. `--send-to-h --dry-run` prints the prompt without calling H or requiring an H key; Gladia still runs and requires its key. The prompt and transcript may contain private information and are printed to stdout; sending to H shares them with H Company and may incur charges. The prompt instructs the agent not to guess missing details and to stop before a final purchase, booking, payment or submission. These are agent instructions, not an enforced approval gate; this one-shot handoff does not implement a follow-up approval conversation. The reusable functions are in `brainy/h_task.py`; the CLI runs the synchronous SDK call via `asyncio.to_thread`.
+
+> *Appuyez une seule fois sur Ctrl+C et attendez la transmission. `--send-to-h --dry-run` affiche le prompt sans appeler H ni nécessiter de clé H ; Gladia fonctionne toujours et nécessite sa clé. Le prompt et la transcription peuvent contenir des informations privées et sont affichés sur la sortie standard ; leur transmission les partage avec H Company et peut entraîner des frais. Le prompt demande à l'agent de ne pas inventer les détails manquants et de s'arrêter avant un achat, une réservation, un paiement ou un envoi définitif. Ce sont des instructions à l'agent, pas un verrou de validation imposé par le code ; cette transmission unique n'implémente pas de dialogue de confirmation ultérieur. Les fonctions réutilisables sont dans `brainy/h_task.py` ; la CLI exécute l'appel SDK synchrone via `asyncio.to_thread`.*
+
 ## Web agent (H Company)
 > *Agent web (H Company)*
 

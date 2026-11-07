@@ -9,6 +9,8 @@ import wave
 
 from dotenv import load_dotenv
 
+from brainy.h_task import build_h_prompt, run_h_task
+
 from .audio import microphone_audio, wav_audio
 from .client import GladiaClient, validate_duration
 
@@ -32,9 +34,10 @@ class TranscriptPrinter:
 
 
 async def run(args):
+    send_to_h = getattr(args, "send_to_h", False)
     client = GladiaClient(
         os.getenv("GLADIA_API_KEY", ""), args.language or (),
-        summary_type=args.summary, endpointing=args.endpointing,
+        summary_type=args.summary or ("bullet_points" if send_to_h else None), endpointing=args.endpointing,
         maximum_duration_without_endpointing=args.max_utterance,
     )
     stop = asyncio.Event()
@@ -60,8 +63,15 @@ async def run(args):
     printer = TranscriptPrinter()
     audio = wav_audio(args.file) if args.file else microphone_audio(args.device)
     summaries = []
+    final_utterances = []
+
+    def on_transcript(transcript):
+        if transcript.is_final:
+            final_utterances.append(transcript.text)
+        printer(transcript)
+
     try:
-        await client.transcribe(audio, printer, stop, on_summary=summaries.append)
+        await client.transcribe(audio, on_transcript, stop, on_summary=summaries.append)
     except asyncio.CancelledError:
         if not forced:
             raise
@@ -75,6 +85,19 @@ async def run(args):
                 print(f"Summarization failed: {summary.error}", file=sys.stderr)
             elif summary.results is not None:
                 print(f"Summary:\n{summary.results}", flush=True)
+    if send_to_h:
+        transcript = "\n".join(final_utterances).strip()
+        summary = next((item.results.strip() for item in reversed(summaries)
+                        if not item.error and item.results and item.results.strip()), "")
+        if not summary:
+            summary = transcript
+            print("No usable summary; using the final transcript for H.", file=sys.stderr)
+        if not summary:
+            raise ValueError("No summary or final transcript available; nothing to send to H.")
+        print(f"H prompt:\n{build_h_prompt(summary, transcript)}", flush=True)
+        if not args.dry_run:
+            answer = await asyncio.to_thread(run_h_task, summary, transcript)
+            print(f"H answer:\n{answer}", flush=True)
 
 
 def duration_type(minimum, maximum):
@@ -93,6 +116,10 @@ def main():
     parser.add_argument("--list-devices", action="store_true", help="List audio devices without an API key.")
     parser.add_argument("--summary", choices=("general", "bullet_points", "concise"),
                         help="Print a post-session summary (default: disabled).")
+    parser.add_argument("--send-to-h", action="store_true",
+                        help="Send the summary and final transcript to H (enables bullet-point summarization).")
+    parser.add_argument("--dry-run", action="store_true",
+                        help="With --send-to-h, print the prompt without calling H (Gladia still runs).")
     parser.add_argument("--endpointing", type=duration_type(0.01, 10), metavar="SECONDS",
                         help="Silence ending an utterance: 0.01–10 seconds (API default: 0.05).")
     parser.add_argument("--max-utterance", type=duration_type(5, 60), metavar="SECONDS",
@@ -101,6 +128,8 @@ def main():
     source.add_argument("--device", help="Microphone device index or name (default: system input).")
     source.add_argument("--file", metavar="PATH.wav", help="Stream a 16 kHz mono 16-bit PCM WAV in real time.")
     args = parser.parse_args()
+    if args.dry_run and not args.send_to_h:
+        parser.error("--dry-run requires --send-to-h")
     load_dotenv()
     try:
         if args.list_devices:
