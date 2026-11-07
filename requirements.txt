@@ -1,4 +1,12 @@
+<<<<<<< HEAD
 httpx
 websockets
 sounddevice
 python-dotenv
+=======
+httpx==0.28.1
+websockets==15.0.1
+sounddevice==0.5.1
+python-dotenv==1.0.1
+playwright==1.56.0
+>>>>>>> d89e97bbccefd63dbb43e87372bc07b55b0c276f
