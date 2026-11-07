@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<style>
+  :root { --royal:#1f4fe0; --gold:#f5b942; --cream:#fbf6ea; }
+  * { box-sizing:border-box; margin:0; }
+  body { width:1440px; height:900px; overflow:hidden; font-family:'Inter',system-ui,sans-serif; }
+  .app { position:relative; width:100%; height:100%; display:grid; grid-template-columns:300px 1fr; background:var(--bg) center/cover no-repeat; }
+  body.dark { --text:#f4f6ff; --muted:rgba(230,236,255,.6); --panel:rgba(14,16,32,.55); --line:rgba(255,255,255,.1); --input:rgba(20,24,48,.7); }
+  body.light { --text:#14204a; --muted:rgba(20,32,74,.55); --panel:rgba(255,255,255,.55); --line:rgba(20,40,120,.1); --input:rgba(255,255,255,.75); }
+  aside { margin:16px; border-radius:24px; background:var(--panel); backdrop-filter:blur(18px); border:1px solid var(--line); padding:22px 18px; color:var(--text); display:flex; flex-direction:column; gap:18px; }
+  .brand { display:flex; align-items:center; gap:10px; font-weight:700; font-size:20px; letter-spacing:.2px; }
+  .brand img { width:34px; }
+  .new { border:1px solid var(--line); border-radius:14px; padding:11px 14px; font-size:14px; font-weight:600; display:flex; gap:8px; align-items:center; }
+  .section { font-size:11px; text-transform:uppercase; letter-spacing:1.2px; color:var(--muted); margin-top:4px; }
+  .item { border-radius:14px; padding:11px 12px; display:flex; flex-direction:column; gap:4px; font-size:14px; }
+  .item.active { background:var(--line); }
+  .item .meta { display:flex; justify-content:space-between; font-size:12px; color:var(--muted); }
+  .tag { font-size:11px; font-weight:600; padding:2px 8px; border-radius:99px; }
+  .paid { background:rgba(52,199,89,.18); color:#1f9d4c; }
+  body.dark .paid { color:#6ee79a; }
+  .done { background:rgba(31,79,224,.15); color:var(--royal); }
+  body.dark .done { color:#9db4ff; }
+  .wait { background:rgba(245,185,66,.22); color:#b07a10; }
+  body.dark .wait { color:var(--gold); }
+  main { position:relative; display:flex; flex-direction:column; align-items:center; justify-content:center; color:var(--text); padding:0 40px 30px; }
+  .mascot { width:340px; filter:drop-shadow(0 30px 40px rgba(0,0,0,.18)); }
+  .status { margin-top:6px; font-size:15px; color:var(--muted); display:flex; gap:10px; align-items:center; }
+  .dot { width:9px; height:9px; border-radius:50%; background:var(--gold); box-shadow:0 0 12px var(--gold); }
+  .wave { display:flex; gap:4px; align-items:center; height:22px; }
+  .wave i { width:4px; border-radius:4px; background:var(--royal); }
+  body.dark .wave i { background:#8fb0ff; }
+  .chat { width:720px; margin-top:22px; display:flex; flex-direction:column; gap:10px; }
+  .msg { max-width:80%; padding:12px 16px; border-radius:18px; font-size:15px; line-height:1.45; }
+  .me { align-self:flex-end; background:var(--royal); color:#fff; border-bottom-right-radius:6px; }
+  .bot { align-self:flex-start; background:var(--panel); backdrop-filter:blur(14px); border:1px solid var(--line); border-bottom-left-radius:6px; }
+  .confirm { align-self:flex-start; width:80%; background:var(--panel); backdrop-filter:blur(14px); border:1px solid var(--gold); border-radius:18px; padding:14px 16px; display:flex; flex-direction:column; gap:10px; font-size:14px; }
+  .confirm .row { display:flex; justify-content:space-between; }
+  .confirm .price { font-size:22px; font-weight:700; }
+  .confirm .btns { display:flex; gap:8px; }
+  .btn { flex:1; text-align:center; padding:9px; border-radius:12px; font-weight:600; font-size:14px; }
+  .yes { background:var(--gold); color:#2a1d00; }
+  .no { border:1px solid var(--line); }
+  .input { width:720px; margin-top:18px; display:flex; align-items:center; gap:12px; background:var(--input); backdrop-filter:blur(16px); border:1px solid var(--line); border-radius:22px; padding:12px 12px 12px 20px; font-size:15px; color:var(--muted); }
+  .input span { flex:1; }
+  .mic { width:42px; height:42px; border-radius:50%; background:var(--royal); display:grid; place-items:center; color:#fff; font-size:18px; box-shadow:0 0 0 6px rgba(31,79,224,.15); }
+  .hint { margin-top:10px; font-size:12px; color:var(--muted); }
+  kbd { font-family:inherit; border:1px solid var(--line); border-bottom-width:2px; border-radius:6px; padding:1px 6px; }
+</style>
+</head>
+<body class="__THEME__" style="--bg:url('__BG__')">
+<div class="app">
+  <aside>
+    <div class="brand"><img src="mascot.png" alt="">Brainy</div>
+    <div class="new"><span style="font-size:18px;line-height:1">+</span> Nouvelle demande</div>
+    <div class="section">Aujourd'hui</div>
+    <div class="item active">Train Paris → Lyon vendredi<div class="meta"><span>17:42</span><span class="tag wait">Confirmation</span></div></div>
+    <div class="item">Pizza Hut sur Uber Eats<div class="meta"><span>12:15</span><span class="tag paid">Payé · 18,90 €</span></div></div>
+    <div class="section">Cette semaine</div>
+    <div class="item">Rendez-vous médecin Doctolib<div class="meta"><span>Mer.</span><span class="tag done">Réservé</span></div></div>
+    <div class="item">Lire mes mails importants<div class="meta"><span>Lun.</span><span class="tag done">Terminé</span></div></div>
+  </aside>
+  <main>
+    <img class="mascot" src="mascot.png" alt="Brainy">
+    <div class="status"><span class="dot"></span>Brainy attend ta confirmation
+      <span class="wave"><i style="height:8px"></i><i style="height:16px"></i><i style="height:22px"></i><i style="height:12px"></i><i style="height:18px"></i><i style="height:9px"></i></span></div>
+    <div class="chat">
+      <div class="msg me">Réserve-moi un train pour Lyon vendredi soir, entre 16h et 20h, le moins cher, max 80 €.</div>
+      <div class="msg bot">J'ai trouvé 4 trains. Le moins cher part à 18h12.</div>
+      <div class="confirm">
+        <div class="row"><strong>Paris Gare de Lyon → Lyon Part-Dieu</strong><span>Ven. 18:12 → 20:08</span></div>
+        <div class="row"><span>TGV INOUI · 2nde classe</span><span class="price">19,00 €</span></div>
+        <div class="btns"><div class="btn yes">Oui, je paie</div><div class="btn no">Non, annuler</div></div>
+      </div>
+    </div>
+    <div class="input"><span>Parle ou écris à Brainy…</span><div class="mic"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></div></div>
+    <div class="hint">Appuie sur <kbd>H</kbd> pour parler</div>
+  </main>
+</div>
+</body>
+</html>
