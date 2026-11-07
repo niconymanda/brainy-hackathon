@@ -534,7 +534,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         await browser.click(10, 20)
         self.assertIs(browser.page, popup)
         original.mouse.click.assert_awaited_once_with(10, 20)
-        popup.wait_for_load_state.assert_awaited_once_with("domcontentloaded", timeout=5000)
+        popup.wait_for_load_state.assert_awaited_once_with("domcontentloaded", timeout=2500)
 
     async def test_load_wait_is_best_effort(self):
         browser = Browser()
@@ -577,8 +577,8 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await browser.type("Lyon"), "Lyon")
         browser.page.locator.assert_called_once_with(":focus")
         field.fill.assert_awaited_once_with("")
-        field.press_sequentially.assert_awaited_once_with("Lyon", delay=65)
-        browser.page.wait_for_timeout.assert_awaited_once_with(1000)
+        field.press_sequentially.assert_awaited_once_with("Lyon", delay=25)
+        browser.page.wait_for_timeout.assert_awaited_once_with(450)
         browser.page.keyboard.press.assert_not_called()
 
     async def test_screenshot_navigation_retry(self):

@@ -118,7 +118,7 @@ class Browser:
         for _ in range(2):
             page = await self.ensure_page()
             try:
-                await page.wait_for_load_state("domcontentloaded", timeout=5000)
+                await page.wait_for_load_state("domcontentloaded", timeout=2500)
                 return
             except Error:
                 if page is await self.ensure_page():
@@ -164,7 +164,7 @@ class Browser:
                 raise
             await self.ensure_page()
         try:
-            await asyncio.wait_for(self._page_opened.wait(), timeout=0.5)
+            await asyncio.wait_for(self._page_opened.wait(), timeout=0.25)
         except asyncio.TimeoutError:
             pass
         await self._wait_for_page()
@@ -181,8 +181,8 @@ class Browser:
             return None
         field = self.page.locator(":focus")
         await field.fill("")
-        await field.press_sequentially(text, delay=65)
-        await self.page.wait_for_timeout(1000)
+        await field.press_sequentially(text, delay=25)
+        await self.page.wait_for_timeout(450)
         return await self.page.evaluate("""() => {
             const el = document.activeElement;
             if (!el) return '';
