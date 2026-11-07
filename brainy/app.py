@@ -11,6 +11,7 @@ import json
 import mimetypes
 import os
 import re
+import subprocess
 import sys
 import threading
 import time
@@ -127,9 +128,9 @@ def open_profile():
     if sys.platform == "win32":
         os.startfile(PROFILE_FILE)
     elif sys.platform == "darwin":
-        os.system(f"open -t '{PROFILE_FILE}'")
+        subprocess.run(["open", "-t", str(PROFILE_FILE)], check=False)
     else:
-        os.system(f"xdg-open '{PROFILE_FILE}'")
+        subprocess.run(["xdg-open", str(PROFILE_FILE)], check=False)
     print(f"Fiche profil : {PROFILE_FILE}")
 
 
