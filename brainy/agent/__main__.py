@@ -3,6 +3,7 @@
 import argparse
 import asyncio
 import os
+import signal
 
 from dotenv import load_dotenv
 
@@ -18,6 +19,7 @@ async def run(args):
 
     client = HoloClient(os.getenv("H_API_KEY", ""), args.model)
     async with Browser(headless=args.headless, profile_dir=args.profile_dir) as browser:
+        status = 0
         async for event in WebAgent(client, browser, ask).run(args.goal, args.url):
             if isinstance(event, AgentStep):
                 print(event.narration, flush=True)
@@ -25,8 +27,16 @@ async def run(args):
                 print(event.result, flush=True)
             elif isinstance(event, AgentError):
                 print(event.reason, event.suggestion, flush=True)
-                return 1
-    return 0
+                status = 1
+        if not args.headless:
+            previous = signal.signal(signal.SIGINT, signal.default_int_handler)
+            try:
+                input("Press Enter to close the browser. ")
+            except EOFError:
+                pass
+            finally:
+                signal.signal(signal.SIGINT, previous)
+    return status
 
 
 def main():
