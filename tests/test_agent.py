@@ -1,4 +1,6 @@
 import unittest
+import io
+from contextlib import redirect_stderr
 from argparse import Namespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -6,6 +8,7 @@ import httpx
 from playwright.async_api import Error
 
 from brainy.agent.browser import Browser
+from brainy.agent.debug import debug_log
 from brainy.agent.__main__ import run
 from brainy.agent.events import AgentError, ConfirmRequest, Done, NeedsUser
 from brainy.agent.holo import Action, HoloClient, parse_action, parse_click
@@ -40,6 +43,7 @@ class AgentTests(unittest.IsolatedAsyncioTestCase):
         self.browser.viewport = (1280, 900)
         self.browser.screenshot.return_value = b"png"
         self.browser.type.return_value = "Test User"
+        self.browser.take_recovery_notes.return_value = []
         self.client = AsyncMock()
         self.client.locate.return_value = (100, 200)
         self.ask = AsyncMock(return_value="non")
@@ -117,6 +121,26 @@ class AgentTests(unittest.IsolatedAsyncioTestCase):
         self.browser.press.assert_not_awaited()
         self.assertTrue(any(isinstance(e, NeedsUser) for e in events))
         self.assertNotIn("private answer", str(self.client.decide.call_args))
+
+    async def test_recovery_note_reaches_model(self):
+        self.browser.take_recovery_notes.return_value = ["Tab reopened; inspect current state."]
+        await self.collect([Action("done")])
+        self.assertIn("Tab reopened", str(self.client.decide.call_args.args[2]))
+
+    async def test_debug_exception_is_local_and_opt_in(self):
+        for debug in (False, True):
+            with self.subTest(debug=debug):
+                self.client.api_key = "private-api-key"
+                self.client.decide.side_effect = ValueError("broken response private-api-key")
+                output = io.StringIO()
+                with redirect_stderr(output):
+                    events = [e async for e in WebAgent(self.client, self.browser, self.ask, debug=debug).run("test")]
+                self.assertNotIn("private-api-key", output.getvalue())
+                self.assertNotIn("broken response", events[-1].reason)
+                if debug:
+                    self.assertIn("builtins.ValueError: broken response [redacted]", output.getvalue())
+                else:
+                    self.assertEqual(output.getvalue(), "")
 
     async def test_type_missed_field(self):
         self.browser.type.return_value = None
@@ -208,6 +232,80 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         page = MagicMock()
         page.is_closed.return_value = False
         return page
+
+    async def test_reopen_last_url_and_limit_two_per_run(self):
+        browser = Browser()
+        browser.browser = MagicMock()
+        browser.browser.is_connected.return_value = True
+        browser.context = MagicMock()
+        original = self.page_mock()
+        original.url = "https://example.org/results"
+        browser.page = original
+        self.assertIs(browser.page, original)
+        original.is_closed.return_value = True
+        reopened = []
+
+        async def new_page():
+            page = self.page_mock()
+            page.url = "about:blank"
+            page.goto = AsyncMock()
+            reopened.append(page)
+            return page
+
+        browser.context.new_page = AsyncMock(side_effect=new_page)
+        for _ in range(2):
+            page = await browser.ensure_page()
+            page.goto.assert_awaited_once_with("https://example.org/results", wait_until="domcontentloaded")
+            page.is_closed.return_value = True
+        with self.assertRaisesRegex(RuntimeError, "recovery limit"):
+            await browser.ensure_page()
+        self.assertEqual(browser.context.new_page.await_count, 2)
+        notes = await browser.take_recovery_notes()
+        self.assertEqual(len(notes), 2)
+        self.assertIn("Do not repeat a submission", notes[0])
+        self.assertEqual(await browser.take_recovery_notes(), [])
+        await browser.start_run()
+        await browser.ensure_page()
+        self.assertEqual(browser.context.new_page.await_count, 3)
+
+    async def test_crash_reopens_and_disconnected_browser_does_not(self):
+        browser = Browser()
+        browser.browser = MagicMock()
+        browser.context = MagicMock()
+        old, new = self.page_mock(), self.page_mock()
+        old.url = "https://example.org/search"
+        new.url = "about:blank"
+        new.goto = AsyncMock()
+        browser.page = old
+        self.assertIs(browser.page, old)
+        browser._on_crash(old)
+        browser.context.new_page = AsyncMock(return_value=new)
+        self.assertIs(await browser.ensure_page(), new)
+        new.goto.assert_awaited_once_with("https://example.org/search", wait_until="domcontentloaded")
+        new.is_closed.return_value = True
+        browser.browser.is_connected.return_value = False
+        with self.assertRaisesRegex(RuntimeError, "Browser or context is closed"):
+            await browser.ensure_page()
+        self.assertEqual(browser.context.new_page.await_count, 1)
+
+    async def test_debug_lifecycle_is_opt_in(self):
+        for debug in (False, True):
+            browser = Browser(debug=debug)
+            page = self.page_mock()
+            page.url = "https://example.org/search?token=private"
+            output = io.StringIO()
+            with redirect_stderr(output):
+                browser._track_page(page)
+                callbacks = dict(page.on.call_args_list[i].args for i in range(3))
+                callbacks["framenavigated"](page.main_frame)
+                callbacks["crash"]()
+                callbacks["close"]()
+            if debug:
+                for event in ("opened", "navigated", "crashed", "closed"):
+                    self.assertIn("Page " + event, output.getvalue())
+                self.assertNotIn("private", output.getvalue())
+            else:
+                self.assertEqual(output.getvalue(), "")
 
     async def test_newest_open_page_and_closed_page_fallback(self):
         browser = Browser()
@@ -309,7 +407,7 @@ class CLITests(unittest.IsolatedAsyncioTestCase):
         async def events(*args):
             yield Done("Finished")
 
-        args = Namespace(headless=False, profile_dir=None, model="test", goal="test", url=None)
+        args = Namespace(headless=False, profile_dir=None, model="test", goal="test", url=None, debug=False, channel=None)
         with patch("brainy.agent.__main__.Browser") as browser, \
                 patch("brainy.agent.__main__.HoloClient"), \
                 patch("brainy.agent.__main__.WebAgent") as agent, \
@@ -329,7 +427,7 @@ class CLITests(unittest.IsolatedAsyncioTestCase):
                     async def events(*args):
                         yield event
 
-                    args = Namespace(headless=headless, profile_dir=None, model="test", goal="test", url=None)
+                    args = Namespace(headless=headless, profile_dir=None, model="test", goal="test", url=None, debug=False, channel=None)
                     with patch("brainy.agent.__main__.Browser") as browser, \
                             patch("brainy.agent.__main__.HoloClient"), \
                             patch("brainy.agent.__main__.WebAgent") as agent, \
@@ -343,3 +441,30 @@ class CLITests(unittest.IsolatedAsyncioTestCase):
                         else:
                             prompt.assert_called_once_with("Press Enter to close the browser. ")
                         browser.return_value.__aexit__.assert_awaited_once()
+
+    async def test_channel_and_debug_forwarded(self):
+        async def events(*args):
+            yield Done("Finished")
+
+        args = Namespace(headless=True, profile_dir="profile", model="test", goal="test", url=None,
+                         debug=True, channel="chrome")
+        with patch("brainy.agent.__main__.Browser") as browser, \
+                patch("brainy.agent.__main__.HoloClient"), \
+                patch("brainy.agent.__main__.WebAgent") as agent, patch("builtins.print"):
+            browser.return_value.__aenter__ = AsyncMock()
+            browser.return_value.__aexit__ = AsyncMock(return_value=False)
+            agent.return_value.run = events
+            await run(args)
+            browser.assert_called_once_with(headless=True, profile_dir="profile", channel="chrome", debug=True)
+            self.assertTrue(agent.call_args.kwargs["debug"])
+
+
+class DebugTests(unittest.TestCase):
+    def test_credentials_and_headers_are_redacted(self):
+        output = io.StringIO()
+        with redirect_stderr(output), patch.dict("os.environ", {"H_API_KEY": "private-key"}):
+            debug_log("ValueError: private-key\nHeaders: sensitive\nAuthorization: Bearer sensitive\n"
+                      "https://user:password@example.org/path?token=sensitive")
+        self.assertNotIn("private-key", output.getvalue())
+        self.assertNotIn("sensitive", output.getvalue())
+        self.assertNotIn("password", output.getvalue())

@@ -1,6 +1,7 @@
 import re
 
 from .events import AgentError, AgentStep, ConfirmRequest, Done, NeedsUser
+from .debug import debug_log
 
 
 RISKY = re.compile(r"pay|payer|submit|envoyer|valider|book|réserver|confirm|acheter|order|commander", re.I)
@@ -8,21 +9,24 @@ SECRET_QUESTION = re.compile(r"\b(?:password|mot\s+de\s+passe|card|carte|cvv|cvc
 
 
 class WebAgent:
-    def __init__(self, client, browser, ask, max_steps=25):
+    def __init__(self, client, browser, ask, max_steps=25, debug=False):
         self.client = client
         self.browser = browser
         self.ask = ask
         self.max_steps = max_steps
+        self.debug = debug
 
     async def run(self, goal, start_url=None):
         history = []
         step = "navigate"
         try:
+            await self.browser.start_run()
             if start_url:
                 await self.browser.goto(start_url)
             for _ in range(self.max_steps):
                 step = "screenshot"
                 screenshot = await self.browser.screenshot()
+                history.extend(await self.browser.take_recovery_notes())
                 step = "model call"
                 action = await self.client.decide(screenshot, goal, history)
                 yield AgentStep(action.narration, action.action)
@@ -85,6 +89,9 @@ class WebAgent:
                                 "result": "executed; inspect current screenshot to verify"})
             yield AgentError("The step limit was reached.", "Try a smaller task or continue manually.")
         except Exception as exc:
+            if self.debug:
+                debug_log(f"{step}: {type(exc).__module__}.{type(exc).__name__}: {exc}",
+                          secrets=(getattr(self.client, "api_key", ""),))
             # API/browser exceptions may contain URLs, headers or page data.
             yield AgentError(f"The web agent could not complete {step} ({type(exc).__name__}).",
                              "Check connectivity and H API configuration, or continue manually.")
