@@ -1,20 +1,35 @@
 # Brainy — frontend
 
-Web app (Vite + React + TypeScript): keyboard shortcut, Siri-like voice overlay, microphone → Gladia.
+Fenêtre Brainy (Vite + React + TypeScript) : fond blanc, mascot animé, scénario de démo « Sarah ».
 
-## Setup
+## Lancer
 
 ```bash
 cd frontend
 npm install
-cp .env.example .env   # fill in GLADIA_API_KEY / HCOMPANY_API_KEY
 npm run dev            # http://localhost:5173
 ```
 
+- `http://localhost:5173/` : mode démo Sarah (voix activée)
+- `?mute` : démarre sans voix
+- `?ws=ws://localhost:8765` : mode live, branché sur le back (contrat dans `context/05-interface-back.md`, faux back : `python3 scripts/mock_ws.py`)
+
+## Touches (mode démo)
+
+| Touche | Action |
+|---|---|
+| `H` ou `Espace` | parler / passer à l'étape suivante (début, puis « oui » à la confirmation) |
+| `B` | plan B (pas 2 créneaux à la suite) |
+| `R` | recommencer |
+| `M` | couper / remettre la voix |
+| `Échap` | fermer l'historique ou le clavier |
+
+Le reste du scénario s'enchaîne tout seul (écoute → to-do → recherche → trouvé → confirmation → réservation → c'est fait).
+
 ## Scripts
 
-- `npm run dev` — dev server
-- `npm run build` — type-check + production build
+- `npm run dev` — serveur de dev
+- `npm run build` — vérification des types + build
 - `npm run lint` — ESLint
 
-API keys stay server-side: never expose them through `VITE_*` variables.
+Les clés API restent côté back : ne jamais les exposer via des variables `VITE_*`.
