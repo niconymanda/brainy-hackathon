@@ -53,8 +53,18 @@ class WebAgent:
                     x, y = await self.client.locate(screenshot, action.target, self.browser.viewport)
                     await self.browser.click(x, y)
                     if action.action == "type":
-                        await self.browser.press("ControlOrMeta+A")
-                        await self.browser.type(action.text)
+                        value = await self.browser.type(action.text)
+                        if value is None:
+                            history.append("Typing click missed the field: focused element is not editable; no text entered.")
+                            screenshot = await self.browser.screenshot()
+                            x, y = await self.client.locate(screenshot, action.target, self.browser.viewport)
+                            await self.browser.click(x, y)
+                            value = await self.browser.type(action.text)
+                        if value is None:
+                            history.append("Typing retry missed the field; no text entered. Re-locate the editable field.")
+                            continue
+                        history.append(("Field now contains " + repr(value) if value else "Field empty") +
+                                       ". If a suggestion list appeared, click the matching suggestion before searching.")
                 elif action.action == "scroll":
                     await self.browser.scroll(action.text)
                 history.append({"action": action.action, "target": action.target,

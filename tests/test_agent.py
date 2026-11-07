@@ -37,6 +37,7 @@ class AgentTests(unittest.IsolatedAsyncioTestCase):
         self.browser = AsyncMock()
         self.browser.viewport = (1280, 900)
         self.browser.screenshot.return_value = b"png"
+        self.browser.type.return_value = "Test User"
         self.client = AsyncMock()
         self.client.locate.return_value = (100, 200)
         self.ask = AsyncMock(return_value="non")
@@ -93,9 +94,30 @@ class AgentTests(unittest.IsolatedAsyncioTestCase):
         events = await self.collect([Action("type", target="Name", text="Test User"),
                                      Action("ask_user", text="Enter your password manually"), Action("done")])
         self.browser.type.assert_awaited_once_with("Test User")
-        self.browser.press.assert_awaited_once_with("ControlOrMeta+A")
+        self.browser.press.assert_not_awaited()
         self.assertTrue(any(isinstance(e, NeedsUser) for e in events))
         self.assertNotIn("private answer", str(self.client.decide.call_args))
+
+    async def test_type_missed_field(self):
+        self.browser.type.return_value = None
+        await self.collect([Action("type", target="Search", text="Lyon"), Action("done")])
+        self.assertEqual(self.client.locate.await_count, 2)
+        history = self.client.decide.call_args.args[2]
+        self.assertIn("not editable", history[0])
+        self.assertIn("retry missed", history[1])
+        self.assertNotIn("executed", str(history))
+
+    async def test_type_retry_and_readback(self):
+        self.browser.type.side_effect = [None, "Lyon"]
+        await self.collect([Action("type", target="Search", text="Lyon"), Action("done")])
+        history = self.client.decide.call_args.args[2]
+        self.assertIn("Field now contains 'Lyon'", history[1])
+        self.assertIn("click the matching suggestion", history[1])
+
+    async def test_type_empty_readback(self):
+        self.browser.type.return_value = ""
+        await self.collect([Action("type", target="Search", text="Lyon"), Action("done")])
+        self.assertIn("Field empty", self.client.decide.call_args.args[2][0])
 
     async def test_follow_up_answer_forwarded(self):
         for answer in ("8:10", ""):
@@ -162,6 +184,29 @@ class HTTPTests(unittest.IsolatedAsyncioTestCase):
 
 
 class BrowserTests(unittest.IsolatedAsyncioTestCase):
+    async def test_type_does_not_touch_noneditable_focus(self):
+        browser = Browser()
+        browser.page = MagicMock()
+        browser.page.evaluate = AsyncMock(return_value=False)
+        self.assertIsNone(await browser.type("Lyon"))
+        browser.page.locator.assert_not_called()
+        browser.page.keyboard.insert_text.assert_not_called()
+
+    async def test_type_clears_types_slowly_and_reads_value(self):
+        browser = Browser()
+        browser.page = MagicMock()
+        browser.page.evaluate = AsyncMock(side_effect=[True, "Lyon"])
+        browser.page.wait_for_timeout = AsyncMock()
+        field = browser.page.locator.return_value
+        field.fill = AsyncMock()
+        field.press_sequentially = AsyncMock()
+        self.assertEqual(await browser.type("Lyon"), "Lyon")
+        browser.page.locator.assert_called_once_with(":focus")
+        field.fill.assert_awaited_once_with("")
+        field.press_sequentially.assert_awaited_once_with("Lyon", delay=65)
+        browser.page.wait_for_timeout.assert_awaited_once_with(1000)
+        browser.page.keyboard.press.assert_not_called()
+
     async def test_screenshot_navigation_retry(self):
         browser = Browser(headless=True)
         browser.page = MagicMock()

@@ -56,7 +56,25 @@ class Browser:
         await self.page.mouse.click(x, y)
 
     async def type(self, text):
-        await self.page.keyboard.insert_text(text)
+        editable = await self.page.evaluate("""() => {
+            const el = document.activeElement;
+            return !!el && !el.disabled && !el.readOnly &&
+                (el.isContentEditable || el.tagName === 'TEXTAREA' ||
+                 (el.tagName === 'INPUT' &&
+                  ['text', 'search', 'email', 'url', 'tel', 'password', 'number'].includes(el.type)));
+        }""")
+        if not editable:
+            return None
+        field = self.page.locator(":focus")
+        await field.fill("")
+        await field.press_sequentially(text, delay=65)
+        await self.page.wait_for_timeout(1000)
+        return await self.page.evaluate("""() => {
+            const el = document.activeElement;
+            if (!el) return '';
+            if (el.type === 'password') return '[redacted]';
+            return el.isContentEditable ? el.textContent : (el.value || '');
+        }""")
 
     async def press(self, key):
         await self.page.keyboard.press(key)
