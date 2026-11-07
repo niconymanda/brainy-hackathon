@@ -61,7 +61,7 @@ def french_question(text):
         return (f"Je bloque : « {stuck.group(1)} » ne donne rien. "
                 "Je tente autre chose ? Ou fais-le à la main et dis-moi « ok ».")
     if text == OUT_OF_BUDGET:
-        return "Je n'ai rien trouvé qui respecte tout. Je continue à chercher, ou on s'arrête là ?"
+        return "Ça prend plus de temps que prévu. Je continue, ou on s'arrête là ?"
     return text
 
 
