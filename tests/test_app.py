@@ -253,6 +253,9 @@ class HelperTests(unittest.TestCase):
         self.assertTrue(app_module.obvious_question("Est-ce que je continue ? Je vais cliquer sur Suivant."))
         self.assertFalse(app_module.obvious_question(
             "Il y a Léo ou Inès. Est-ce que je réserve pour Léo ?", request))
+        self.assertFalse(app_module.obvious_question("Est-ce que je réserve pour Léo ou Léon ?", "RDV pour Léonie"))
+        self.assertFalse(app_module.obvious_question("Est-ce que je réserve pour Léo, ou Inès ?"))
+        self.assertFalse(app_module.obvious_question("Quel jour ? Est-ce que je continue ?"))
         for q in ("Quel âge a le patient ?", "Peux-tu entrer ton mot de passe ?",
                   "Pour Léo ou pour Inès ?", "Est-ce que je réserve pour Léo ou pour Inès ?",
                   "Est-ce que je choisis un billet remboursable ou non remboursable ?",

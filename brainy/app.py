@@ -77,7 +77,7 @@ OBVIOUS = re.compile(r"^\W*(est-ce que|veux-tu|tu veux|voulez-vous|je confirme|c
                      r"peux-tu confirmer|c'est bien|ok pour|je (prends|sélectionne|choisis|continue|valide))|"
                      r"\b(est-(il|elle)|bien)\b", re.I)
 OPEN_QUESTION = re.compile(r"\b(quel|quelle|quels|quelles|lequel|laquelle|combien|quand|où|comment|pourquoi)\b", re.I)
-CHOICE = re.compile(r"(\w+) ou (?:un |une |le |la |les |pour |l')?(\w+)", re.I)
+CHOICE = re.compile(r"(\w+),? ou (?:un |une |le |la |les |pour |l')?(\w+)", re.I)
 AUTO_REPLY = ("Oui. Ne me demande pas de valider les étapes intermédiaires : choisis l'option la plus logique d'après "
               "ma demande et mon compte, et continue jusqu'à la confirmation finale.")
 BUDGET = ("\nSearch limit: if nothing matches every constraint after checking about 3 practitioners or dates, "
@@ -110,7 +110,7 @@ def open_choice(question, request):
         first, second = match[1].casefold(), match[2].casefold()
         if second in {"pas", "non"} and not re.search(r"\w", question[match.end():]):
             continue
-        if not (first in said and second in said):
+        if not all(re.search(rf"\b{re.escape(word)}\b", said) for word in (first, second)):
             return True
     return False
 
@@ -118,8 +118,9 @@ def open_choice(question, request):
 def obvious_question(question, request=""):
     """Yes/no check-ins the agent should settle itself; open questions, secrets and the budget check go to the user."""
     sentences = re.split(r"(?<=[.!?])\s+", question.strip())
-    asked = next((s for s in reversed(sentences) if s.endswith("?")), sentences[-1])
-    return (bool(OBVIOUS.search(asked)) and not OPEN_QUESTION.search(asked) and not open_choice(question, request)
+    questions = [s for s in sentences if s.endswith("?")] or sentences[-1:]
+    return (bool(OBVIOUS.search(questions[-1])) and not any(OPEN_QUESTION.search(q) for q in questions)
+            and not open_choice(question, request)
             and not SECRET_QUESTION.search(question) and question != french_question(OUT_OF_BUDGET))
 
 
