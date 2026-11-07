@@ -31,8 +31,8 @@ class WebAgent:
 
     def _needs_confirmation(self, action):
         if not self.gate_narration:
-            # Gate on the clicked element's label only: narrations like "je confirme la sélection" are not risky.
-            return action.action in {"click", "confirm"} and bool(RISKY.search(action.target))
+            # Clicks are gated on the element's label only: narrations like "je confirme la sélection" are not risky.
+            return action.action == "confirm" or (action.action == "click" and bool(RISKY.search(action.target)))
         return action.action == "confirm" or (
             action.action == "click" and RISKY.search(action.target + " " + action.narration))
 

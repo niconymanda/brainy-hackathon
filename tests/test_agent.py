@@ -73,7 +73,7 @@ class AgentTests(unittest.IsolatedAsyncioTestCase):
     async def test_label_only_gate_ignores_narration(self):
         self.ask.return_value = "non"
         self.client.decide.side_effect = [
-            Action("confirm", target="Dermatologue", narration="Je confirme la sélection de la catégorie."),
+            Action("click", target="Dermatologue", narration="Je confirme la sélection de la catégorie."),
             Action("click", target="Hugo Esposito-Farès", narration="Je réserve pour toi."),
             Action("click", target="Confirmer le rendez-vous", narration="Je finalise."),
         ]
@@ -82,6 +82,14 @@ class AgentTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([e.summary for e in events if isinstance(e, ConfirmRequest)], ["Je finalise."])
         self.assertEqual(self.browser.click.await_count, 2)
         self.assertEqual(events[-1], Done("Action skipped: confirmation refused. Nothing was submitted."))
+
+    async def test_label_only_gate_keeps_confirm_action(self):
+        self.ask.return_value = "non"
+        self.client.decide.side_effect = [Action("confirm", target="Continuer", narration="Je termine.")]
+        agent = WebAgent(self.client, self.browser, self.ask, max_steps=5, gate_narration=False)
+        events = [event async for event in agent.run("test")]
+        self.assertTrue(any(isinstance(e, ConfirmRequest) for e in events))
+        self.browser.click.assert_not_awaited()
 
     async def test_confirm_action_and_narration_gate(self):
         for action in (Action("confirm", target="Continue"),
