@@ -55,7 +55,7 @@ class FakeHolo:
         self.steps = iter(self.script)
 
     async def decide(self, screenshot, goal, history, page_context=None):
-        FakeHolo.goal = goal
+        FakeHolo.goal, FakeHolo.history = goal, list(history)
         return next(self.steps)
 
     async def locate(self, screenshot, description, viewport):
@@ -125,6 +125,30 @@ class AppTests(unittest.IsolatedAsyncioTestCase):
                 events = await self.recv_until(ws, "done")
         self.assertNotIn("needs_user", [e["type"] for e in events])
         self.assertTrue(events[-1]["ok"])
+
+    async def test_mic_click_answers_a_question(self):
+        class FakeGladia:
+            def __init__(self, *args):
+                pass
+
+            async def transcribe(self, audio, on_transcript, stop):
+                on_transcript(type("T", (), {"text": "Pour Léo", "is_final": True})())
+                await stop.wait()
+
+        script = [Action("ask_user", text="Pour Léo ou pour Inès ?"), Action("done", text="Fini.")]
+        with patch.object(FakeHolo, "script", script), patch.object(app_module, "SILENCE_SECONDS", 0.1), \
+                patch("brainy.stt.client.GladiaClient", FakeGladia), \
+                patch("brainy.stt.audio.microphone_audio", lambda device: None):
+            async with connect("ws://127.0.0.1:8799/ws") as ws:
+                await ws.recv()
+                await ws.send(json.dumps({"type": "user_text", "text": "Un dentiste"}))
+                await self.recv_until(ws, "needs_user")
+                await ws.send(json.dumps({"type": "start_listening"}))
+                events = await self.recv_until(ws, "done")
+        kinds = [e["type"] for e in events]
+        self.assertLess(kinds.index("listening"), kinds.index("transcript"))
+        self.assertTrue(events[-1]["ok"])
+        self.assertIn("Pour Léo", json.dumps(FakeHolo.history, ensure_ascii=False))
 
     async def test_refused_confirmation_clicks_nothing(self):
         async with connect("ws://127.0.0.1:8799/ws") as ws:
