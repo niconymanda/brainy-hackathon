@@ -110,7 +110,7 @@ def open_choice(question, request):
         first, second = match[1].casefold(), match[2].casefold()
         if second in {"pas", "non"} and not re.search(r"\w", question[match.end():]):
             continue
-        if not all(re.search(rf"\b{re.escape(word)}\b", said) for word in (first, second)):
+        if not all(re.search(rf"\b{re.escape(word.rstrip('s'))}s?\b", said) for word in (first, second)):
             return True
     return False
 
