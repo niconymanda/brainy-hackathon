@@ -68,6 +68,7 @@ DIRECT_LOOKUP = r"""({mode, target, marker}) => {
     };
     for (let rank = 0; rank < groups.length; rank++) {
         for (const el of document.querySelectorAll(groups[rank])) {
+            if (el.hasAttribute('aria-pressed')) continue;
             const control = el.tagName === 'OPTION' ? el.closest('select') : el;
             if (!enabled(el) || !visible(control)) continue;
             if (normalize(text(el)) === target) return mark(el, rank, null);
@@ -104,7 +105,7 @@ class Browser:
     def page(self, page):
         if page not in self._pages:
             self._pages.append(page)
-            page.set_default_timeout(15000)
+            page.set_default_timeout(5000)
             page.on("close", lambda: self._lifecycle("closed", page))
             page.on("crash", lambda: self._on_crash(page))
             page.on("framenavigated", lambda frame: self._on_navigation(page, frame))
@@ -206,23 +207,32 @@ class Browser:
         parts = urlsplit(url)
         if parts.scheme not in {"http", "https"} or not parts.hostname or parts.username or parts.password:
             raise ValueError("Only HTTP(S) URLs without credentials are allowed")
-        await self.page.goto(url, wait_until="domcontentloaded")
+        await self.page.goto(url, wait_until="domcontentloaded", timeout=5000)
 
     async def screenshot(self):
         # Mask password fields before any image leaves the machine.
         for attempt in range(2):
             page = await self.ensure_page()
             try:
-                await page.wait_for_load_state("domcontentloaded")
-                return await page.screenshot(mask=[page.locator('input[type="password"]')])
+                try:
+                    await page.wait_for_load_state("domcontentloaded", timeout=2500)
+                except PlaywrightTimeoutError:
+                    pass
+                return await asyncio.wait_for(page.screenshot(mask=[page.locator('input[type="password"]')],
+                                                              timeout=4000), timeout=5)
             except Error as exc:
                 if attempt or (not page.is_closed() and page not in self._crashed and "Execution context was destroyed" not in str(exc)):
                     raise
 
     async def page_context(self):
         page = await self.ensure_page()
-        return {"url": page.url, "title": await page.title(),
-                "text": await page.evaluate("() => (document.body?.innerText || '').slice(0, 1500)")}
+        async def read():
+            return {"url": page.url, "title": await page.title(),
+                    "text": await page.evaluate("() => (document.body?.innerText || '').slice(0, 1500)")}
+        try:
+            return await asyncio.wait_for(read(), timeout=3)
+        except (Error, asyncio.TimeoutError):
+            return {"url": page.url, "title": "", "text": "Page context temporarily unavailable during loading."}
 
     async def click(self, x, y):
         self._page_opened.clear()
@@ -266,6 +276,14 @@ class Browser:
         return await self._find_direct("choose", text)
 
     async def _find_direct(self, mode, text):
+        try:
+            return await asyncio.wait_for(self._lookup_direct(mode, text), timeout=2)
+        except (Error, asyncio.TimeoutError) as exc:
+            if self.debug:
+                debug_log(f"Direct lookup deferred to Holo ({type(exc).__name__}).")
+            return None
+
+    async def _lookup_direct(self, mode, text):
         page = await self.ensure_page()
         marker = uuid4().hex
         best = None
@@ -312,6 +330,29 @@ class Browser:
         return await self.type(text)
 
     async def _direct_click(self, element):
+        page = await self.ensure_page()
+        started, loaded = asyncio.Event(), asyncio.Event()
+        def on_request(request):
+            if request.is_navigation_request() and request.frame == page.main_frame:
+                started.set()
+        def on_load():
+            loaded.set()
+        page.on("request", on_request)
+        page.on("domcontentloaded", on_load)
+        try:
+            result = await self._click_direct_element(element)
+            if result:
+                try:
+                    await asyncio.wait_for(started.wait(), timeout=0.15)
+                    await asyncio.wait_for(loaded.wait(), timeout=2.5)
+                except asyncio.TimeoutError:
+                    pass
+            return result
+        finally:
+            page.remove_listener("request", on_request)
+            page.remove_listener("domcontentloaded", on_load)
+
+    async def _click_direct_element(self, element):
         try:
             await element.click(timeout=500, no_wait_after=True)
             return True
@@ -332,6 +373,12 @@ class Browser:
             return None
 
     async def select_text(self, text, exact=False, find_only=False):
+        try:
+            return await asyncio.wait_for(self._resolve_text(text, exact, find_only), timeout=5)
+        except (Error, asyncio.TimeoutError):
+            return None
+
+    async def _resolve_text(self, text, exact=False, find_only=False):
         page = await self.ensure_page()
         name = re.compile(".*" if exact else re.escape(text), re.I)
         options = {"exact": True, "find_only": find_only} if exact else {}
@@ -424,4 +471,31 @@ class Browser:
         await self.page.keyboard.press(key)
 
     async def scroll(self, direction):
-        await self.page.mouse.wheel(0, -600 if direction == "up" else 600)
+        page = await self.ensure_page()
+        delta = -600 if direction == "up" else 600
+        state = """() => [window.scrollX, window.scrollY, ...Array.from(document.querySelectorAll('*'))
+            .filter(el => el.scrollHeight > el.clientHeight && el.clientHeight > 0)
+            .map(el => el.scrollTop)]"""
+        async def perform():
+            before = await page.evaluate(state)
+            await page.mouse.move(self.viewport[0] / 2, self.viewport[1] / 2)
+            await page.mouse.wheel(0, delta)
+            await page.wait_for_timeout(100)
+            if before != await page.evaluate(state):
+                return "Scrolled the content under the viewport center."
+            moved = await page.evaluate("""delta => {
+                const candidates = [document.scrollingElement, ...document.querySelectorAll('*')]
+                    .filter(el => el && el.clientHeight > 0 && el.scrollHeight > el.clientHeight &&
+                        (el === document.scrollingElement || /auto|scroll/.test(getComputedStyle(el).overflowY)))
+                    .filter(el => { const r = el.getBoundingClientRect();
+                        return r.bottom > 0 && r.top < innerHeight && r.right > 0 && r.left < innerWidth; });
+                candidates.sort((a,b) => b.clientWidth*b.clientHeight - a.clientWidth*a.clientHeight);
+                for (const el of candidates) {
+                    const before = el.scrollTop;
+                    el.scrollTop += delta;
+                    if (el.scrollTop !== before) return true;
+                }
+                return false;
+            }""", delta)
+            return "Scrolled an inner scroll container." if moved else "Scroll had no effect; try another direction or approach."
+        return await asyncio.wait_for(perform(), timeout=3)
