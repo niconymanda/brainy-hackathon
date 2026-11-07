@@ -148,6 +148,11 @@ class Browser:
                 if attempt or (not page.is_closed() and page not in self._crashed and "Execution context was destroyed" not in str(exc)):
                     raise
 
+    async def page_context(self):
+        page = await self.ensure_page()
+        return {"url": page.url, "title": await page.title(),
+                "text": await page.evaluate("() => (document.body?.innerText || '').slice(0, 1500)")}
+
     async def click(self, x, y):
         self._page_opened.clear()
         page = await self.ensure_page()

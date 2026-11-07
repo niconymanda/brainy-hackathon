@@ -1,3 +1,4 @@
+import hashlib
 import re
 
 from .events import AgentError, AgentStep, ConfirmRequest, Done, NeedsUser
@@ -18,6 +19,9 @@ class WebAgent:
 
     async def run(self, goal, start_url=None):
         history = []
+        pending = None
+        last_key = None
+        unchanged_count = 0
         step = "navigate"
         try:
             await self.browser.start_run()
@@ -26,15 +30,36 @@ class WebAgent:
             for _ in range(self.max_steps):
                 step = "screenshot"
                 screenshot = await self.browser.screenshot()
+                step = "page context"
+                page_context = await self.browser.page_context()
+                signature = (page_context["url"], hashlib.sha256(screenshot).digest())
                 history.extend(await self.browser.take_recovery_notes())
+                if pending:
+                    key, before, target = pending
+                    if before == signature:
+                        unchanged_count = unchanged_count + 1 if key == last_key else 1
+                    else:
+                        unchanged_count = 0
+                    last_key = key
+                    pending = None
+                    if unchanged_count >= 2:
+                        history.append(f"Your last {key[0]} on '{target}' had no visible effect; do not repeat it, "
+                                       "try a different approach (e.g. results may already be shown, scroll, "
+                                       "choose a suggestion first, or ask the user).")
                 step = "model call"
-                action = await self.client.decide(screenshot, goal, history)
+                action = await self.client.decide(screenshot, goal, history, page_context=page_context)
+                key = (action.action, " ".join(action.target.casefold().split()))
                 yield AgentStep(action.narration, action.action)
                 if action.action == "done":
                     yield Done(action.text or action.narration)
                     return
-                if action.action == "ask_user":
+                question = None
+                if key == last_key and unchanged_count >= 2:
+                    question = (f"I'm stuck: repeating '{action.target}' has no visible effect. "
+                                "Should I try a different approach, or can you do it manually and reply ok?")
+                elif action.action == "ask_user":
                     question = action.text or action.narration
+                if question is not None:
                     yield NeedsUser(question)
                     step = "user answer"
                     answer = await self.ask(question)
@@ -45,6 +70,8 @@ class WebAgent:
                         history.append("User has completed the requested manual step; inspect the screenshot.")
                     else:
                         history.append("User answered: " + answer)
+                    last_key = None
+                    unchanged_count = 0
                     continue
                 if action.action == "confirm" or (
                     action.action == "click" and RISKY.search(action.target + " " + action.narration)
@@ -87,6 +114,7 @@ class WebAgent:
                     await self.browser.scroll(action.text)
                 history.append({"action": action.action, "target": action.target,
                                 "result": "executed; inspect current screenshot to verify"})
+                pending = (key, signature, action.target)
             yield AgentError("The step limit was reached.", "Try a smaller task or continue manually.")
         except Exception as exc:
             if self.debug:
