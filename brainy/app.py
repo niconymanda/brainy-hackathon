@@ -100,7 +100,8 @@ def brainy_goal(request, now=None):
             "mardis' = any Tuesday). Everything stated in the request is settled: never ask about it again. Times "
             "like 'vers 13h' or 'l'après-midi' are preferences: pick the closest available slot. If a required "
             "detail is truly missing, use ask_user; never use done to ask a question. Use done only when the task "
-            "is complete or impossible, with a short summary of what was done.")
+            "is complete, with a short summary of what was done. If it cannot be done, use ask_user to say why and "
+            "propose the closest alternative.")
 
 
 def site_tips(text):

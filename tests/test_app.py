@@ -223,6 +223,7 @@ class HelperTests(unittest.TestCase):
         self.assertIn("Un dermato mardi vers 13h", goal)
         self.assertIn("Today is samedi 7 novembre 2026", goal)
         self.assertIn("never use done to ask", goal)
+        self.assertNotIn("complete or impossible", goal)
         self.assertNotIn("list the questions", goal)
 
     def test_obvious_questions(self):
