@@ -76,7 +76,8 @@ AUTONOMY = ("\nAutonomy: the user is delegating and does not want to be interrup
 OBVIOUS = re.compile(r"^\W*(est-ce que|veux-tu|tu veux|voulez-vous|je confirme|confirmes?-tu|dois-je|je peux|puis-je|"
                      r"peux-tu confirmer|c'est bien|ok pour|je (prends|sélectionne|choisis|continue|valide))|"
                      r"\b(est-(il|elle)|bien)\b", re.I)
-OPEN_QUESTION = re.compile(r"\b(quel|quelle|quels|quelles|lequel|laquelle|combien|quand|où|comment|pourquoi|ou(?! (pas|non)\W*$))\b", re.I)
+OPEN_QUESTION = re.compile(r"\b(quel|quelle|quels|quelles|lequel|laquelle|combien|quand|où|comment|pourquoi)\b", re.I)
+CHOICE = re.compile(r"(\w+) ou (?:un |une |le |la |les |pour |l')?(\w+)", re.I)
 AUTO_REPLY = ("Oui. Ne me demande pas de valider les étapes intermédiaires : choisis l'option la plus logique d'après "
               "ma demande et mon compte, et continue jusqu'à la confirmation finale.")
 BUDGET = ("\nSearch limit: if nothing matches every constraint after checking about 3 practitioners or dates, "
@@ -102,10 +103,23 @@ def french_question(text):
     return text
 
 
-def obvious_question(question):
+def open_choice(question, request):
+    """An 'X ou Y' alternative, unless it only restates the request (e.g. 'mardi ou mercredi') or is a final 'ou pas'."""
+    said = request.casefold()
+    for match in CHOICE.finditer(question):
+        first, second = match[1].casefold(), match[2].casefold()
+        if second in {"pas", "non"} and not re.search(r"\w", question[match.end():]):
+            continue
+        if not (first in said and second in said):
+            return True
+    return False
+
+
+def obvious_question(question, request=""):
     """Yes/no check-ins the agent should settle itself; open questions, secrets and the budget check go to the user."""
-    asked = re.split(r"(?<=[.!])\s+", question.strip())[-1]
-    return (bool(OBVIOUS.search(asked)) and not OPEN_QUESTION.search(asked)
+    sentences = re.split(r"(?<=[.!?])\s+", question.strip())
+    asked = next((s for s in reversed(sentences) if s.endswith("?")), sentences[-1])
+    return (bool(OBVIOUS.search(asked)) and not OPEN_QUESTION.search(asked) and not open_choice(question, request)
             and not SECRET_QUESTION.search(question) and question != french_question(OUT_OF_BUDGET))
 
 
@@ -371,7 +385,7 @@ class Session:
                 elif isinstance(event, NeedsUser):
                     self.confirming = False
                     question = french_question(event.question)
-                    if not event.after_budget and obvious_question(question):
+                    if not event.after_budget and obvious_question(question, request):
                         self.auto_reply = AUTO_REPLY
                         self.emit(type="agent_step", narration="Je choisis l'option évidente et je continue.",
                                   action="auto")
