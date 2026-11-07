@@ -9,7 +9,7 @@ Tout le contexte du front est ici. On ne code pas tant que la checklist n'est pa
 | 3 | Contenu de la page (overlay seul ? autres écrans ?) | [`03-page.md`](03-page.md) | À remplir |
 | 4 | Style (couleurs, ambiance, références) | [`04-style.md`](04-style.md) | Décidé : petite fenêtre, fond blanc |
 | 5 | Interface avec le back (API, WebSocket, voix de réponse) | [`05-interface-back.md`](05-interface-back.md) | Piste notée, hors périmètre front |
-| 6 | Démo (écran, échéance, scénario du pitch) | [`06-demo.md`](06-demo.md) | Scénario SNCF écrit, cadre à remplir |
+| 6 | Démo (écran, échéance, scénario du pitch) | [`06-demo.md`](06-demo.md) | Scénario Sarah (Doctolib) écrit, cadre à remplir |
 | 7 | Récap Devin et questions ouvertes | [`07-recap.md`](07-recap.md) | Après 1 à 6 |
 
 Images, vidéos et GIF de référence : dans `assets/`.

@@ -13,30 +13,31 @@
 ## Ce qui doit marcher à coup sûr
 
 1. Brainy installé en app, appelé avec la touche **H**.
-2. Scénario train de bout en bout, avec confirmation orale avant paiement.
+2. Scénario Sarah (Doctolib) de bout en bout, avec confirmation orale avant de réserver.
 
 Bonus si le cœur marche : mot « Brainy », extension Chrome.
 
-## Scénario, étape par étape
+## Scénario retenu : la charge mentale de Sarah
 
-Écrans : `maquettes/v3-sncf/` (storyboard + un PNG par écran). Dates : jeudi 12 novembre (à ajuster au jour du pitch). Prix et horaires fictifs pour les maquettes.
+Sarah, maman de 4 enfants, rentre de l'école à 18h45. Elle a en tête un dermato pour elle et le dentiste pour Léo (l'aîné) et Inès (la 3e), alors que les enfants réclament le dîner. Elle délègue tout à Brainy à l'oral, va cuisiner, et ne revient que pour dire « oui ». Le cœur du pitch : Brainy gère les petites conditions (samedi, après l'école, à la suite, près de la maison, jour férié).
 
-| # | Écran | Utilisateur dit / fait | Brainy dit (oral + texte) | Côté technique |
-|---|-------|------------------------|---------------------------|----------------|
-| 1 | Repos | Ouvre Brainy | « Salut, je suis Brainy » (texte) | Front |
-| 2 | Écoute | Appuie sur H : « Réserve-moi un billet SNCF pour jeudi, en fin d'après-midi, entre 17h et 22h, pour aller voir mon père. Pas plus de 80 €. » | (transcription en direct) | Gladia |
-| 3 | Reformule et demande | | « OK : jeudi 12 novembre, départ entre 17h et 22h, 80 € maximum. Tu pars d'où, et ton père habite où ? » | Back |
-| 4 | Tu réponds | « Je pars de Paris, il habite à Lyon. » | | Gladia |
-| 5 | L'agent travaille | | « Je m'en occupe, ça prend quelques secondes. » Étapes cochées en direct. | Agent H Company |
-| 6 | Résultat | | « J'ai trouvé 7 trains. Le moins cher part à 19h04 et coûte 29 €. » | Agent H |
-| 7 | Confirmation | | « Je m'apprête à payer 29 € avec ta carte enregistrée. C'est bon pour toi ? » | Back |
-| 8 | Paiement | « Ouais carré, tu peux prendre. » | « Parfait, je paie. » | Agent H |
-| 9 | C'est réservé | | « C'est réservé ! Jeudi 19h04, voiture 7, place 42. Ton billet est dans tes mails. Bon voyage chez ton père ! » | Agent H |
-| 10 | Historique | Clique sur l'historique | | Front |
+Écrans : `maquettes/v5-demo-sarah/`. Dates du storyboard : soir du lundi 9 novembre (à caler sur le jour du pitch). Médecins et créneaux fictifs.
 
-Variante plan B (écran 11) : « Je n'ai rien trouvé sous 80 € entre 17h et 22h. Le moins cher est à 89 €, ou il y a un train à 22h34 pour 45 €. Je fais quoi ? »
+| # | Écran | Sarah dit / fait | Brainy dit (oral + texte) | Côté technique |
+|---|-------|------------------|---------------------------|----------------|
+| 1 | Repos | Ouvre Brainy | « Bonsoir Sarah » (texte) | Front |
+| 2 | Écoute | Appuie sur H : « Il me faut un dermato pour moi, un samedi de préférence parce qu'en semaine je bosse. Et le dentiste pour Léo et Inès, le mercredi après-midi vu qu'ils n'ont pas école, l'un après l'autre si possible. Pas trop loin de la maison. » | (transcription en direct) | Gladia |
+| 3 | To-do | | « C'est noté, 2 rendez-vous. Je m'en occupe, va faire à manger, je te préviens dès que j'ai trouvé. » | Back (découpe en tâches + conditions) |
+| 4 | L'agent travaille | (cuisine) | Étapes en direct : samedi 14 complet, mercredi 11 férié… | Agent H Company sur Doctolib |
+| 5 | Trouvé | | « Sarah, j'ai trouvé ! Ce samedi était complet, donc je t'ai pris le suivant. Et comme mercredi 11 est férié, les enfants passent le 18. » | Agent H |
+| 6 | Confirmation | | « Je réserve les 3 rendez-vous ? Le dermato samedi 21 à 10h30, et le dentiste mercredi 18 : Léo à 14h, Inès à 14h30. » | Back |
+| 7 | Réservation | « Oui, parfait, merci ! » | « Je réserve. » | Agent H |
+| 8 | C'est fait | | « C'est fait ! Les 3 rendez-vous sont réservés et dans ton agenda. Je te les rappellerai la veille. Bon appétit ! » | Agent H |
+| 9 | Historique | Clique sur l'historique | | Front |
 
-Question ouverte : l'étape 3-4 (demander le départ et l'arrivée) peut sauter si on dit tout dans la première phrase (« … pour aller voir mon père à Lyon, depuis Paris »). Plus court pour le pitch, mais montre moins le dialogue.
+Plan B (écran 10) : pas deux créneaux à la suite le mercredi : « Soit Léo à 14h et Inès à 16h, soit les deux à la suite samedi 21, juste avant ton dermato. Tu préfères ? »
+
+Ancien scénario (billet SNCF) gardé en réserve : `maquettes/v3-sncf/`.
 
 ## Plan B
 
