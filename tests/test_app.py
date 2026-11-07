@@ -55,6 +55,7 @@ class FakeHolo:
         self.steps = iter(self.script)
 
     async def decide(self, screenshot, goal, history, page_context=None):
+        FakeHolo.goal = goal
         return next(self.steps)
 
     async def locate(self, screenshot, description, viewport):
@@ -104,6 +105,7 @@ class AppTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(kinds[0], "say")
             self.assertIn("agent_step", kinds)
             self.assertEqual(self.browser.visited, ["https://www.doctolib.fr"])
+            self.assertIn("profile data", FakeHolo.goal)
             self.assertEqual(self.browser.clicks, 1)
             await ws.send(json.dumps({"type": "confirm", "answer": "oui"}))
             events = await self.recv_until(ws, "history")
