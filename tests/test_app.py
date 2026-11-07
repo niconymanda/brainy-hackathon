@@ -175,7 +175,8 @@ class HelperTests(unittest.TestCase):
                   "Ton nom de naissance est-il Esposito-Farès ?"):
             self.assertTrue(app_module.obvious_question(q), q)
         for q in ("Quel âge a le patient ?", "Peux-tu entrer ton mot de passe ?",
-                  "Pour Léo ou pour Inès ?", app_module.french_question(app_module.OUT_OF_BUDGET)):
+                  "Pour Léo ou pour Inès ?", "Est-ce que je réserve pour Léo ou pour Inès ?",
+                  app_module.french_question(app_module.OUT_OF_BUDGET)):
             self.assertFalse(app_module.obvious_question(q), q)
 
     def test_yes_no(self):
