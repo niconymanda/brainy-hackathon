@@ -143,7 +143,8 @@ class Browser:
             page = await self.ensure_page()
             try:
                 await page.wait_for_load_state("domcontentloaded")
-                return await page.screenshot(mask=[page.locator('input[type="password"]')])
+                return await page.screenshot(type="jpeg", quality=80,
+                                             mask=[page.locator('input[type="password"]')])
             except Error as exc:
                 if attempt or (not page.is_closed() and page not in self._crashed and "Execution context was destroyed" not in str(exc)):
                     raise
@@ -180,7 +181,7 @@ class Browser:
             return None
         field = self.page.locator(":focus")
         await field.fill("")
-        await field.press_sequentially(text, delay=65)
+        await field.press_sequentially(text, delay=25)
         await self.page.wait_for_timeout(1000)
         return await self.page.evaluate("""() => {
             const el = document.activeElement;

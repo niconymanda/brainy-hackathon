@@ -88,7 +88,9 @@ SITE_TIPS = {
                  "For an arrondissement or postal code, append it to the city: https://www.doctolib.fr/<specialty>/"
                  "<city>-<postal code> (e.g. 9e arrondissement de Paris = https://www.doctolib.fr/dermatologue/"
                  "paris-75009). The results are then already located: do not touch the location or Secteur filters. "
-                 "If you use the search bar, pick a suggestion in the dropdown before pressing Rechercher."),
+                 "If you use the search bar, pick a suggestion in the dropdown before pressing Rechercher. "
+                 "Each result lists its next slots: click directly a slot that fits the request in the results list; "
+                 "do not open a practitioner's profile that shows no matching slot."),
 }
 STUCK = re.compile(r"^I'm stuck: repeating '(.*)' has no visible effect\.", re.S)
 
@@ -232,6 +234,13 @@ class BrainyApp:
             except Exception as exc:
                 print(f"Browser launch failed (channel={channel}): {type(exc).__name__}", file=sys.stderr)
         raise RuntimeError("Unable to launch a browser")
+
+    async def warm_up(self):
+        """Open the agent's browser as soon as Brainy starts, so the first request does not wait for it."""
+        try:
+            await self.get_browser()
+        except Exception as exc:
+            print(f"Browser warm-up failed: {type(exc).__name__}", file=sys.stderr)
 
     async def close(self):
         if self.browser is not None:
@@ -461,6 +470,7 @@ def start_hotkey(combo, loop, app):
 
 async def serve_app(args, ready):
     app = BrainyApp(args)
+    warm_up = asyncio.create_task(app.warm_up())
     if getattr(args, "hotkey", ""):
         start_hotkey(args.hotkey, asyncio.get_running_loop(), app)
 
@@ -477,6 +487,7 @@ async def serve_app(args, ready):
         try:
             await asyncio.Future()
         finally:
+            warm_up.cancel()
             await app.close()
 
 

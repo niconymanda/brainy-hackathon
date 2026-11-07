@@ -47,6 +47,10 @@ def parse_click(content, viewport):
     return min(width - 1, x * width / 1000), min(height - 1, y * height / 1000)
 
 
+def _data_url(image):
+    return "data:image/jpeg;base64," if image[:2] == b"\xff\xd8" else "data:image/png;base64,"
+
+
 class HoloClient:
     def __init__(self, api_key, model="holo3-1-35b-a3b", http=None):
         if not api_key:
@@ -58,7 +62,7 @@ class HoloClient:
     async def _chat(self, screenshot, prompt):
         data = {"model": self.model, "messages": [{"role": "user", "content": [
             {"type": "text", "text": prompt},
-            {"type": "image_url", "image_url": {"url": "data:image/png;base64," + base64.b64encode(screenshot).decode()}},
+            {"type": "image_url", "image_url": {"url": _data_url(screenshot) + base64.b64encode(screenshot).decode()}},
         ]}], "temperature": 0, "max_tokens": 512}
         async def send(client):
             response = await client.post("https://api.hcompany.ai/v1/chat/completions",
