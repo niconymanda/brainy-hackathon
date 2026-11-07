@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<style>
+  :root { --royal:#1f4fe0; --gold:#f2b23a; --ink:#141a33; }
+  * { box-sizing:border-box; margin:0; }
+  body { width:1720px; height:760px; background:#e9eaee; font-family:Inter,system-ui,sans-serif; color:var(--ink); display:flex; flex-direction:column; align-items:center; justify-content:center; gap:26px; }
+  h1 { font-size:20px; font-weight:600; color:#5b6070; letter-spacing:.2px; }
+  .row { display:flex; gap:36px; align-items:flex-start; }
+  .col { display:flex; flex-direction:column; align-items:center; gap:14px; }
+  .label { font-size:14px; color:#6b7080; font-weight:500; }
+  .w { width:360px; height:500px; border-radius:32px; background:var(--wbg); box-shadow:0 24px 60px rgba(20,26,51,.16), 0 0 0 1px rgba(20,26,51,.05); position:relative; overflow:hidden; display:flex; flex-direction:column; align-items:center; padding:18px 20px 20px; }
+  .top { width:100%; display:flex; justify-content:space-between; align-items:center; height:24px; color:rgba(20,26,51,.35); }
+  .dots { display:flex; gap:6px; } .dots i { width:10px; height:10px; border-radius:50%; background:rgba(20,26,51,.12); }
+  .name { font-size:13px; font-weight:600; letter-spacing:.3px; color:rgba(20,26,51,.45); }
+  .mascot { width:300px; margin-top:6px; }
+  .mascot.small { width:150px; margin-top:0; }
+  .status { margin-top:2px; font-size:17px; font-weight:600; text-align:center; }
+  .sub { margin-top:6px; font-size:14px; color:rgba(20,26,51,.55); text-align:center; line-height:1.4; min-height:20px; padding:0 6px; }
+  .wave { display:flex; gap:4px; align-items:center; height:26px; margin-top:8px; }
+  .wave i { width:4px; border-radius:4px; background:var(--royal); }
+  .bar { position:absolute; bottom:18px; left:20px; right:20px; display:flex; justify-content:space-between; align-items:center; }
+  .ic { width:44px; height:44px; border-radius:50%; display:grid; place-items:center; color:rgba(20,26,51,.55); background:rgba(20,26,51,.05); }
+  .mic { width:64px; height:64px; border-radius:50%; background:var(--royal); display:grid; place-items:center; box-shadow:0 8px 24px rgba(31,79,224,.35); }
+  .mic.on { box-shadow:0 0 0 10px rgba(31,79,224,.14), 0 0 0 22px rgba(31,79,224,.07), 0 8px 24px rgba(31,79,224,.35); }
+  .hint { position:absolute; bottom:92px; font-size:12px; color:rgba(20,26,51,.4); }
+  kbd { font-family:inherit; border:1px solid rgba(20,26,51,.18); border-bottom-width:2px; border-radius:6px; padding:0 6px; }
+  .card { width:100%; margin-top:10px; border-radius:20px; background:rgba(255,255,255,.75); border:1.5px solid var(--gold); padding:14px 16px; display:flex; flex-direction:column; gap:6px; font-size:13px; }
+  .card .big { font-size:26px; font-weight:700; }
+  .card .route { font-weight:600; font-size:14px; }
+  .card .meta { color:rgba(20,26,51,.55); }
+  .say { margin-top:4px; font-size:12px; color:rgba(20,26,51,.5); }
+  .say b { color:var(--ink); }
+  .hist { width:100%; margin-top:10px; display:flex; flex-direction:column; gap:8px; }
+  .hi { border-radius:16px; background:rgba(255,255,255,.6); padding:11px 14px; display:flex; justify-content:space-between; align-items:center; font-size:14px; }
+  .hi small { display:block; font-size:12px; color:rgba(20,26,51,.5); margin-top:2px; }
+  .tag { font-size:11px; font-weight:600; padding:3px 8px; border-radius:99px; white-space:nowrap; }
+  .paid { background:rgba(52,199,89,.16); color:#1c8f45; } .done { background:rgba(31,79,224,.12); color:var(--royal); } .wait { background:rgba(242,178,58,.2); color:#9c6a0a; }
+  .ic.active { background:var(--ink); color:#fff; }
+</style>
+</head>
+<body style="--wbg:__BG__">
+<h1>__TITLE__</h1>
+<div class="row">
+  <div class="col"><div class="w">
+    <div class="top"><div class="dots"><i></i><i></i><i></i></div><span class="name">BRAINY</span><span style="width:42px"></span></div>
+    <img class="mascot" src="mascot-noshadow.png">
+    <div class="status">Salut, je suis Brainy</div>
+    <div class="sub">Dis-moi ce que tu veux faire</div>
+    <div class="hint">Appuie sur <kbd>H</kbd> pour parler</div>
+    <div class="bar"><div class="ic"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5M12 7v5l3 2"/></svg></div><div class="mic"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></div><div class="ic"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/></svg></div></div>
+  </div><div class="label">Repos</div></div>
+
+  <div class="col"><div class="w">
+    <div class="top"><div class="dots"><i></i><i></i><i></i></div><span class="name">BRAINY</span><span style="width:42px"></span></div>
+    <img class="mascot" src="mascot-noshadow.png">
+    <div class="status">Je t'écoute…</div>
+    <div class="sub">« Réserve-moi un train pour Lyon vendredi soir, max 80 € »</div>
+    <div class="bar"><div class="ic"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5M12 7v5l3 2"/></svg></div><div class="mic on"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></div><div class="ic"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/></svg></div></div>
+  </div><div class="label">Écoute</div></div>
+
+  <div class="col"><div class="w">
+    <div class="top"><div class="dots"><i></i><i></i><i></i></div><span class="name">BRAINY</span><span style="width:42px"></span></div>
+    <img class="mascot small" src="mascot-noshadow.png">
+    <div class="status">Je paie ce billet ?</div>
+    <div class="card">
+      <div class="route">Paris → Lyon · Ven. 18:12</div>
+      <div class="meta">TGV INOUI · 2nde classe · arrivée 20:08</div>
+      <div class="big">19,00 €</div>
+    </div>
+    <div class="say">Dis <b>« oui »</b> pour payer ou <b>« non »</b> pour annuler</div>
+    <div class="bar"><div class="ic"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5M12 7v5l3 2"/></svg></div><div class="mic on"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></div><div class="ic"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/></svg></div></div>
+  </div><div class="label">Confirmation</div></div>
+
+  <div class="col"><div class="w">
+    <div class="top"><div class="dots"><i></i><i></i><i></i></div><span class="name">HISTORIQUE</span><span style="width:42px"></span></div>
+    <div class="hist">
+      <div class="hi"><div>Train Paris → Lyon<small>Aujourd'hui, 17:42</small></div><span class="tag wait">À confirmer</span></div>
+      <div class="hi"><div>Pizza Hut · Uber Eats<small>Aujourd'hui, 12:15</small></div><span class="tag paid">18,90 €</span></div>
+      <div class="hi"><div>RDV médecin · Doctolib<small>Mercredi</small></div><span class="tag done">Réservé</span></div>
+      <div class="hi"><div>Mails importants<small>Lundi</small></div><span class="tag done">Lu</span></div>
+    </div>
+    <div class="bar"><div class="ic active"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5M12 7v5l3 2"/></svg></div><div class="mic"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></div><div class="ic"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/></svg></div></div>
+  </div><div class="label">Historique (au clic)</div></div>
+</div>
+</body>
+</html>
