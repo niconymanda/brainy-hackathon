@@ -66,6 +66,9 @@ BUDGET = ("\nSearch limit: if nothing matches every constraint after checking ab
 SITE_TIPS = {
     "doctolib": ("\nDoctolib tip: to search, navigate directly to https://www.doctolib.fr/<specialty>/<city> "
                  "(lowercase, hyphens, e.g. https://www.doctolib.fr/dermatologue/paris) instead of the search bar. "
+                 "For an arrondissement or postal code, append it to the city: https://www.doctolib.fr/<specialty>/"
+                 "<city>-<postal code> (e.g. 9e arrondissement de Paris = https://www.doctolib.fr/dermatologue/"
+                 "paris-75009). The results are then already located: do not touch the location or Secteur filters. "
                  "If you use the search bar, pick a suggestion in the dropdown before pressing Rechercher."),
 }
 STUCK = re.compile(r"^I'm stuck: repeating '(.*)' has no visible effect\.", re.S)

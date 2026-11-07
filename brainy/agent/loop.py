@@ -47,7 +47,7 @@ class WebAgent:
         unchanged_count = 0
         step = "navigate"
         budget_steps, budget_start, nudged_at = 0, time.monotonic(), None
-        answered, facts = {}, []
+        answered, facts, recent = {}, [], []
         try:
             await self.browser.start_run()
             if start_url:
@@ -79,6 +79,10 @@ class WebAgent:
                 known = ("\nThe user already answered (settled, never ask again):\n- " + "\n- ".join(facts)) if facts else ""
                 action = await self.client.decide(screenshot, goal + known, history, page_context=page_context)
                 key = (action.action, " ".join(action.target.casefold().split()))
+                recent = (recent + [key])[-6:]
+                if action.action in {"click", "type"} and recent.count(key) >= 3:
+                    history.append(f"You already tried {action.action} on '{action.target}' {recent.count(key)} times "
+                                   "recently without progress: stop doing it and continue with what is visible.")
                 yield AgentStep(action.narration, action.action)
                 question = None
                 if action.action == "done":

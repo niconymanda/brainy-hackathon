@@ -158,6 +158,12 @@ class AgentTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Quel jour ? -> Mardi à 13h", goals[-1])
         self.assertEqual(events[-1], Done("ok"))
 
+    async def test_alternating_clicks_are_flagged(self):
+        events, histories = await self.run_budget(
+            [Action("click", target="Secteur"), Action("click", target="Fermer")] * 3 + [Action("done", text="ok")])
+        self.assertFalse(any("already tried" in str(h) for h in histories[4]))
+        self.assertTrue(any("already tried click on 'Secteur' 3 times" in str(h) for h in histories[5]))
+
     async def test_search_budget_resets_after_answer(self):
         self.ask.return_value = "continue"
         events, histories = await self.run_budget(
