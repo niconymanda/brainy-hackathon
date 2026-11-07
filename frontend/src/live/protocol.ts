@@ -14,7 +14,7 @@ export type ServerEvent =
   | { type: 'agent_step'; narration: string; action: string }
   | { type: 'needs_user'; question: string }
   | { type: 'confirm_request'; summary: string }
-  | { type: 'done'; result: string }
+  | { type: 'done'; result: string; ok?: boolean }
   | { type: 'error'; reason: string; suggestion: string }
   | { type: 'history'; items: HistoryItem[] }
 

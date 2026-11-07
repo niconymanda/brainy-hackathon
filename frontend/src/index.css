@@ -454,6 +454,39 @@ button {
   border-top: 1px dashed var(--line);
 }
 
+.confirm-actions {
+  display: flex;
+  gap: 8px;
+  width: 100%;
+  margin-top: 10px;
+}
+.btn {
+  flex: 1;
+  height: 38px;
+  border: 0;
+  border-radius: 999px;
+  font-size: 14px;
+  font-weight: 600;
+}
+.btn--yes {
+  background: var(--blue);
+  color: #fff;
+}
+.btn--no {
+  background: var(--card);
+  color: var(--ink);
+}
+
+.mascot.is-appearing img {
+  animation: appear 0.9s cubic-bezier(0.2, 1.3, 0.4, 1) both, float 4s ease-in-out 0.9s infinite;
+}
+@keyframes appear {
+  from {
+    opacity: 0;
+    transform: scale(0.6) rotate(-12deg);
+  }
+}
+
 /* History */
 .history {
   display: flex;

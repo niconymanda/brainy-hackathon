@@ -1,0 +1,162 @@
+import argparse
+import asyncio
+import json
+import tempfile
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+
+from websockets.asyncio.client import connect
+
+import brainy.app as app_module
+from brainy.agent.holo import Action
+
+
+class FakeBrowser:
+    viewport = (1280, 900)
+
+    def __init__(self):
+        self.visited = []
+        self.clicks = 0
+
+    async def start_run(self):
+        pass
+
+    async def take_recovery_notes(self):
+        return []
+
+    async def goto(self, url):
+        self.visited.append(url)
+
+    async def screenshot(self):
+        return f"shot{self.clicks}".encode()
+
+    async def page_context(self):
+        return {"url": self.visited[-1] if self.visited else "about:blank", "title": "", "text": ""}
+
+    async def click(self, x, y):
+        self.clicks += 1
+
+    async def type(self, text):
+        return text
+
+    async def scroll(self, direction):
+        pass
+
+
+class FakeHolo:
+    script = [
+        Action("click", target="Dermatologue", narration="Je cherche un dermatologue."),
+        Action("confirm", target="Réserver", narration="Je réserve samedi 21 à 10h30 ?"),
+        Action("done", text="Rendez-vous réservé samedi 21 à 10h30."),
+    ]
+
+    def __init__(self, api_key, model):
+        self.steps = iter(self.script)
+
+    async def decide(self, screenshot, goal, history, page_context=None):
+        return next(self.steps)
+
+    async def locate(self, screenshot, description, viewport):
+        return 10, 10
+
+
+class AppTests(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.browser = FakeBrowser()
+        patches = [
+            patch.object(app_module, "HISTORY_FILE", Path(self.tmp.name) / "history.json"),
+            patch.object(app_module, "HoloClient", FakeHolo),
+            patch.object(app_module.BrainyApp, "get_browser", self.fake_browser),
+        ]
+        for p in patches:
+            p.start()
+            self.addCleanup(p.stop)
+        args = argparse.Namespace(port=8799, language=["fr"], device=None, channel=None,
+                                  model="m", max_steps=10)
+        self.ready = asyncio.Event()
+        self.server = asyncio.create_task(app_module.serve_app(args, self.ready))
+        await asyncio.wait_for(self.ready.wait(), 5)
+
+    async def fake_browser(self, _app=None):
+        return self.browser
+
+    async def asyncTearDown(self):
+        self.server.cancel()
+        await asyncio.gather(self.server, return_exceptions=True)
+        self.tmp.cleanup()
+
+    async def recv_until(self, ws, kind):
+        events = []
+        while True:
+            event = json.loads(await asyncio.wait_for(ws.recv(), 5))
+            events.append(event)
+            if event["type"] == kind:
+                return events
+
+    async def test_text_request_confirm_and_done(self):
+        async with connect("ws://127.0.0.1:8799/ws") as ws:
+            self.assertEqual(json.loads(await ws.recv())["type"], "history")
+            await ws.send(json.dumps({"type": "user_text", "text": "Un dermato sur Doctolib samedi"}))
+            events = await self.recv_until(ws, "confirm_request")
+            kinds = [e["type"] for e in events]
+            self.assertEqual(kinds[0], "say")
+            self.assertIn("agent_step", kinds)
+            self.assertEqual(self.browser.visited, ["https://www.doctolib.fr"])
+            self.assertEqual(self.browser.clicks, 1)
+            await ws.send(json.dumps({"type": "confirm", "answer": "oui"}))
+            events = await self.recv_until(ws, "history")
+            done = next(e for e in events if e["type"] == "done")
+            self.assertTrue(done["ok"])
+            self.assertIn("10h30", done["result"])
+            self.assertEqual(events[-1]["items"][0]["status"], "Terminé")
+            self.assertEqual(self.browser.clicks, 2)
+
+    async def test_refused_confirmation_clicks_nothing(self):
+        async with connect("ws://127.0.0.1:8799/ws") as ws:
+            await ws.recv()
+            await ws.send(json.dumps({"type": "user_text", "text": "Un dermato"}))
+            await self.recv_until(ws, "confirm_request")
+            await ws.send(json.dumps({"type": "user_text", "text": "Non merci"}))
+            events = await self.recv_until(ws, "done")
+            self.assertFalse(events[-1]["ok"])
+            self.assertEqual(self.browser.clicks, 1)
+
+    async def test_voice_request_auto_stops_after_silence(self):
+        async def transcribe(self_client, audio, callback, stop):
+            from brainy.stt import Transcript
+            callback(Transcript("Un dermato", False, "1"))
+            callback(Transcript("Un dermato samedi", True, "1"))
+            await stop.wait()
+
+        async def no_audio(device=None):
+            yield b""
+
+        with patch("brainy.stt.client.GladiaClient.transcribe", transcribe), \
+                patch("brainy.stt.audio.microphone_audio", no_audio), \
+                patch.object(app_module, "SILENCE_SECONDS", 0.3), \
+                patch.dict("os.environ", {"GLADIA_API_KEY": "k"}):
+            async with connect("ws://127.0.0.1:8799/ws") as ws:
+                await ws.recv()
+                await ws.send(json.dumps({"type": "start_listening"}))
+                events = await self.recv_until(ws, "say")
+                kinds = [e["type"] for e in events]
+                self.assertEqual(kinds[0], "listening")
+                self.assertEqual(events[-2], {"type": "transcript", "text": "Un dermato samedi", "final": True})
+
+    async def test_static_fallback(self):
+        response = app_module.static_response("/../../etc/passwd")
+        self.assertIn(response.status_code, (200, 500))
+        self.assertNotIn(b"root:", response.body)
+
+
+class HelperTests(unittest.TestCase):
+    def test_start_url(self):
+        self.assertEqual(app_module.start_url_for("Prends-moi un RDV sur Doctolib"), "https://www.doctolib.fr")
+        self.assertIsNone(app_module.start_url_for("Réserve un restaurant"))
+
+    def test_yes_no(self):
+        self.assertTrue(app_module.YES.search("Oui, parfait, merci !"))
+        self.assertFalse(app_module.YES.search("Non"))
+        self.assertTrue(app_module.NO.search("non merci"))

@@ -51,3 +51,17 @@ Un message = un objet JSON. Types dans `src/live/protocol.ts`, logique dans `src
 
 La voix de Brainy est faite côté front (synthèse vocale du navigateur) : le back envoie juste le texte.
 Un faux serveur de test est dans `scripts/mock_ws.py` (`python3 scripts/mock_ws.py`, puis `http://localhost:5173/?ws=ws://localhost:8765`).
+
+## Le pont réel : `brainy/app.py` (branche `app-bridge`)
+
+`python -m brainy.app` (ou double-clic sur `Brainy.command` sur Mac) :
+- sert `frontend/dist` et le WebSocket `/ws` sur `127.0.0.1:8765` ;
+- ouvre la fenêtre Brainy (pywebview, 360×560, toujours au premier plan, à droite de l'écran) ;
+- `start_listening` → micro → Gladia (`fr`), transcription en direct, **arrêt auto après ~2 s de silence** (`BRAINY_SILENCE`) ou à la 2e pression sur H ;
+- texte final → `build_h_prompt` → `WebAgent` (Holo) dans un Chrome visible avec un profil dédié `~/.brainy/chrome-profile` (on s'y connecte une fois à Doctolib, ça reste) ;
+- si le texte cite un site connu (Doctolib, SNCF, Uber Eats…), l'agent démarre directement dessus ;
+- `NeedsUser` / `ConfirmRequest` → la fenêtre affiche la question ; la réponse (voix via H, clavier ou boutons Oui/Non) repart vers l'agent. « oui / ok / parfait / vas-y » = oui, « non / stop / annule » = non ;
+- `done` a un champ `ok` (false si l'utilisateur a refusé ou arrêté) ;
+- historique sauvegardé dans `~/.brainy/history.json`.
+
+Clés dans `.env` à la racine : `GLADIA_API_KEY`, `H_API_KEY` (ou `HCOMPANY_API_KEY`). Options : `--no-window`, `--channel chrome|msedge`, `--device`, `--language`, `--max-steps`.

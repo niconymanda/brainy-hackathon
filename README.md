@@ -8,6 +8,19 @@ Many websites still don't work with screen readers. Captchas, date pickers, seat
 
 > *Beaucoup de sites web ne fonctionnent toujours pas avec les lecteurs d'écran. Captchas, sélecteurs de date, plans de sièges, pop-ups et paiements en plusieurs étapes transforment une tâche de cinq minutes en une heure de frustration, ou la rendent impossible sans aide. Avec Brainy, l'utilisateur dit ce qu'il veut, et Brainy s'occupe du site à sa place.*
 
+## Lancer l'appli Brainy (Mac)
+> *Launch the Brainy desktop app (macOS)*
+
+Prérequis : Python 3.10+ (`brew install python@3.12`), Node 18+, Google Chrome. Créer `.env` à la racine avec `GLADIA_API_KEY` et `H_API_KEY`.
+
+```sh
+./Brainy.command            # 1er lancement : installe tout, puis ouvre la fenêtre Brainy
+./scripts/make_mac_app.sh   # optionnel : crée ~/Applications/Brainy.app avec l'icône (à mettre dans le Dock)
+```
+
+Appuie sur **H** (ou le micro), parle, Brainy s'arrête tout seul quand tu te tais. L'agent ouvre Chrome à côté. Au premier lancement, macOS demande l'accès au micro (et éventuellement à « Accessibilité » pour le terminal). Détails du contrat : `frontend/context/05-interface-back.md`.
+
+
 ## How it works
 > *Fonctionnement*
 

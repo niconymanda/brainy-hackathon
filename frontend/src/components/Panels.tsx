@@ -13,7 +13,7 @@ export function Wave() {
   )
 }
 
-export function Content({ ui, speaking }: { ui: UiState; speaking: boolean }) {
+export function Content({ ui, speaking, onConfirm }: { ui: UiState; speaking: boolean; onConfirm?: (yes: boolean) => void }) {
   return (
     <>
       {ui.done && (
@@ -88,6 +88,16 @@ export function Content({ ui, speaking }: { ui: UiState; speaking: boolean }) {
               </p>
             )
           })}
+        </div>
+      )}
+      {ui.confirm && onConfirm && (
+        <div className="confirm-actions">
+          <button className="btn btn--yes" onClick={() => onConfirm(true)}>
+            Oui, vas-y
+          </button>
+          <button className="btn btn--no" onClick={() => onConfirm(false)}>
+            Non
+          </button>
         </div>
       )}
       {ui.options && (

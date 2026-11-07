@@ -7,6 +7,7 @@ import { useLive } from './live/useLive'
 
 const params = new URLSearchParams(window.location.search)
 const WS_URL = params.get('ws')
+const IN_APP = params.has('app')
 function useLiveEngine(muted: boolean) {
   return useLive(WS_URL ?? '', muted)
 }
@@ -18,7 +19,7 @@ function App() {
   const [typing, setTyping] = useState(false)
   const [draft, setDraft] = useState('')
   const inputRef = useRef<HTMLInputElement>(null)
-  const { ui, speaking, spoken, history, waitingForUser, next, reset, showPlanB, submitText } = useEngine(muted)
+  const { ui, speaking, spoken, history, waitingForUser, next, reset, showPlanB, submitText, confirm } = useEngine(muted)
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -61,9 +62,13 @@ function App() {
       <main className="widget" aria-label="Brainy">
         <div className="titlebar">
           <span className="lights" aria-hidden="true">
-            <i />
-            <i />
-            <i />
+            {!IN_APP && (
+              <>
+                <i />
+                <i />
+                <i />
+              </>
+            )}
           </span>
           <span className="title">{historyOpen ? 'Historique' : 'Brainy'}</span>
           <button
@@ -83,7 +88,7 @@ function App() {
             <div className="screen">
               {ui.mascot !== 'none' && <Mascot size={ui.mascot} speaking={speaking} working={working} />}
               <div className="content" key={ui.status}>
-                <Content ui={ui} speaking={speaking} />
+                <Content ui={ui} speaking={speaking} onConfirm={confirm} />
               </div>
             </div>
           )}

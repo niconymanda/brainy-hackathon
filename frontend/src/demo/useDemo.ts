@@ -97,5 +97,6 @@ export function useDemo(muted: boolean) {
     reset,
     showPlanB,
     submitText: () => next(),
+    confirm: (yes: boolean) => (yes ? next() : reset()),
   }
 }

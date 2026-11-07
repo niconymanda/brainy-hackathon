@@ -7,9 +7,12 @@ interface Props {
   working: boolean
 }
 
+// WebKit (Safari, macOS app window) plays VP9 WebM without its alpha channel.
+const VIDEO_ALPHA = !/AppleWebKit/.test(navigator.userAgent) || /Chrome|Chromium|Edg/.test(navigator.userAgent)
+
 export function Mascot({ size, speaking, working }: Props) {
-  const [appeared, setAppeared] = useState(false)
-  const cls = ['mascot', `mascot--${size}`, speaking && 'is-speaking', working && 'is-working', appeared && 'is-idle']
+  const [appeared, setAppeared] = useState(!VIDEO_ALPHA)
+  const cls = ['mascot', `mascot--${size}`, speaking && 'is-speaking', working && 'is-working', appeared && 'is-idle', !VIDEO_ALPHA && 'is-appearing']
     .filter(Boolean)
     .join(' ')
   return (

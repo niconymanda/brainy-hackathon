@@ -3,10 +3,20 @@ import { cancelSpeech, speak } from '../tts'
 import type { HistoryItem, UiState } from '../types'
 import type { ClientEvent, ServerEvent } from './protocol'
 
-const IDLE: UiState = { mascot: 'xl', mic: 'idle', status: 'Bonjour', sub: "Qu'est-ce que je peux faire pour toi ?", hint: true }
+const IDLE: UiState = {
+  mascot: 'xl',
+  mic: 'idle',
+  status: 'Bonjour',
+  sub: "Qu'est-ce que je peux faire pour toi ?",
+  hint: true,
+}
 
-function reduce(ui: UiState, e: ServerEvent): UiState {
+type Action = ServerEvent | { type: 'thinking' }
+
+function reduce(ui: UiState, e: Action): UiState {
   switch (e.type) {
+    case 'thinking':
+      return { ...ui, mic: 'off', status: 'Je réfléchis…', mascotMood: 'work' }
     case 'idle':
       return IDLE
     case 'listening':
@@ -26,11 +36,19 @@ function reduce(ui: UiState, e: ServerEvent): UiState {
       }
     }
     case 'needs_user':
-      return { mascot: 's', mic: 'on', status: e.question, steps: ui.steps }
+      return { mascot: 's', mic: 'idle', status: e.question, steps: ui.steps, sayHint: 'Appuie sur H pour répondre' }
     case 'confirm_request':
-      return { mascot: 's', mic: 'on', status: 'Je confirme ?', confirm: [e.summary], sayHint: 'Dis « oui » ou « non »' }
+      return {
+        mascot: 's',
+        mic: 'idle',
+        status: 'Je confirme ?',
+        confirm: [e.summary],
+        sayHint: 'Appuie sur H et dis « oui » ou « non »',
+      }
     case 'done':
-      return { mascot: 'none', mic: 'idle', status: "C'est fait !", done: [], doneNote: e.result }
+      return e.ok === false
+        ? { mascot: 'l', mic: 'idle', status: e.result, hint: true }
+        : { mascot: 'none', mic: 'idle', status: "C'est fait !", done: [], doneNote: e.result }
     case 'error':
       return { mascot: 's', mic: 'idle', status: 'Oups, un souci', sub: `${e.reason} ${e.suggestion}` }
     default:
@@ -42,7 +60,7 @@ const spokenText = (e: ServerEvent) =>
   e.type === 'say' ? e.text
   : e.type === 'needs_user' ? e.question
   : e.type === 'confirm_request' ? `${e.summary}. Je confirme ?`
-  : e.type === 'done' ? e.result
+  : e.type === 'done' ? (e.ok === false ? e.result : `C'est fait ! ${e.result}`)
   : e.type === 'error' ? `${e.reason}. ${e.suggestion}`
   : null
 
@@ -98,14 +116,29 @@ export function useLive(url: string, muted: boolean) {
 
   const next = useCallback(() => {
     cancelSpeech()
-    const cur = uiRef.current
-    if (cur.confirm) send({ type: 'confirm', answer: 'oui' })
-    else if (cur.mic === 'on') send({ type: 'stop_listening' })
-    else send({ type: 'start_listening' })
+    if (uiRef.current.mic === 'on') {
+      send({ type: 'stop_listening' })
+      dispatch({ type: 'thinking' })
+    } else if (uiRef.current.mic === 'idle') send({ type: 'start_listening' })
   }, [send])
 
-  const submitText = useCallback((text: string) => send({ type: 'user_text', text }), [send])
+  const confirm = useCallback(
+    (yes: boolean) => {
+      cancelSpeech()
+      send({ type: 'confirm', answer: yes ? 'oui' : 'non' })
+      dispatch({ type: 'thinking' })
+    },
+    [send],
+  )
+
+  const submitText = useCallback(
+    (text: string) => {
+      send({ type: 'user_text', text })
+      dispatch({ type: 'thinking' })
+    },
+    [send],
+  )
   const reset = useCallback(() => dispatch({ type: 'idle' }), [])
 
-  return { ui, speaking, spoken, history, waitingForUser: ui.mic !== 'off', next, reset, showPlanB: () => {}, submitText }
+  return { ui, speaking, spoken, history, waitingForUser: ui.mic !== 'off', next, reset, showPlanB: () => {}, submitText, confirm }
 }
