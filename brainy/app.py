@@ -361,8 +361,10 @@ def main():
 
     screen = webview.screens[0] if webview.screens else None
     width, height = 360, 560
-    x = screen.width - width - 24 if screen else None
-    webview.create_window("Brainy", url, width=width, height=height, x=x, y=60 if screen else None,
+    x = y = None
+    if screen and screen.width > width + 24 and screen.height > height + 60:
+        x, y = screen.width - width - 24, 60
+    webview.create_window("Brainy", url, width=width, height=height, x=x, y=y,
                           on_top=True, resizable=False, background_color="#FFFFFF")
     webview.start()
     return 0
