@@ -243,11 +243,14 @@ class HelperTests(unittest.TestCase):
     def test_obvious_questions(self):
         for q in ("Est-ce que tu veux bien que je prenne le rendez-vous pour toi ?",
                   "Je confirme la sélection de la catégorie dermatologue ?",
-                  "Ton nom de naissance est-il Esposito-Farès ?", "Est-ce que je continue ou pas ?"):
+                  "Ton nom de naissance est-il Esposito-Farès ?", "Est-ce que je continue ou pas ?",
+                  "Je cherche un dermatologue. Je vise un mardi ou un mercredi vers 13h. "
+                  "Veux-tu que je prenne la première option disponible ?"):
             self.assertTrue(app_module.obvious_question(q), q)
         for q in ("Quel âge a le patient ?", "Peux-tu entrer ton mot de passe ?",
                   "Pour Léo ou pour Inès ?", "Est-ce que je réserve pour Léo ou pour Inès ?",
                   "Est-ce que je choisis un billet remboursable ou non remboursable ?",
+                  "Je cherche un mardi ou un mercredi. Est-ce que je prends le Dr Martin ou le Dr Durand ?",
                   app_module.french_question(app_module.OUT_OF_BUDGET)):
             self.assertFalse(app_module.obvious_question(q), q)
 

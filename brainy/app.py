@@ -104,7 +104,8 @@ def french_question(text):
 
 def obvious_question(question):
     """Yes/no check-ins the agent should settle itself; open questions, secrets and the budget check go to the user."""
-    return (bool(OBVIOUS.search(question)) and not OPEN_QUESTION.search(question)
+    asked = re.split(r"(?<=[.!])\s+", question.strip())[-1]
+    return (bool(OBVIOUS.search(asked)) and not OPEN_QUESTION.search(asked)
             and not SECRET_QUESTION.search(question) and question != french_question(OUT_OF_BUDGET))
 
 
