@@ -11,6 +11,10 @@ from urllib.parse import quote, quote_plus
 
 import httpx
 from websockets.asyncio.client import connect
+from websockets.exceptions import ConnectionClosedError
+
+POST_STOP_TIMEOUT = 120
+RESULT_TIMEOUT = 120
 
 
 @dataclass(frozen=True)
@@ -71,6 +75,52 @@ class GladiaClient:
         detail = " ".join(detail.split())
         return detail[:500] + ("…" if len(detail) > 500 else "")
 
+    async def _get_summary(self, session_id: str | None) -> Summary:
+        if not session_id:
+            return Summary(error="Gladia returned no session id; cannot retrieve the summary.")
+
+        async def poll():
+            delay = 1
+            async with httpx.AsyncClient(timeout=20) as http:
+                while True:
+                    try:
+                        response = await http.get(
+                            f"https://api.gladia.io/v2/live/{quote(session_id, safe='')}",
+                            headers={"x-gladia-key": self.api_key},
+                        )
+                    except httpx.TransportError:
+                        response = None
+                    if response is not None and not response.is_error:
+                        job = response.json()
+                        status = job.get("status")
+                        if status == "done":
+                            summary = (job.get("result") or {}).get("summarization") or {}
+                            error = summary.get("error")
+                            if error:
+                                return Summary(error=self._safe_error(json.dumps(error)))
+                            if isinstance(summary.get("results"), str):
+                                return Summary(results=summary["results"])
+                            return Summary(error="Gladia completed the job without a summary.")
+                        if status == "error":
+                            detail = self._safe_error(json.dumps(job.get("error") or "No details returned."))
+                            return Summary(error=f"Gladia job failed: {detail}")
+                        if status not in ("queued", "processing"):
+                            return Summary(error="Gladia returned an unexpected job status.")
+                    elif response is not None and response.status_code != 429 and response.status_code < 500:
+                        return Summary(error=(
+                            f"Summary retrieval failed (HTTP {response.status_code}): "
+                            f"{self._safe_error(response.text)}"
+                        ))
+                    await asyncio.sleep(delay)
+                    delay = min(delay * 2, 10)
+
+        try:
+            return await asyncio.wait_for(poll(), timeout=RESULT_TIMEOUT)
+        except asyncio.TimeoutError:
+            return Summary(error="Timed out waiting for Gladia's summary; try retrieving the live result later.")
+        except (ValueError, TypeError, AttributeError):
+            return Summary(error="Gladia returned an invalid summary result.")
+
     async def transcribe(
         self,
         audio: AsyncGenerator[bytes, None],
@@ -100,6 +150,16 @@ class GladiaClient:
             config["endpointing"] = self.endpointing
         if self.maximum_duration_without_endpointing is not None:
             config["maximum_duration_without_endpointing"] = self.maximum_duration_without_endpointing
+        summary_received = False
+
+        def deliver_summary(summary):
+            nonlocal summary_received
+            summary_received = True
+            if on_summary is not None:
+                on_summary(summary)
+            elif summary.error:
+                logging.getLogger(__name__).warning("Gladia summarization failed: %s", summary.error)
+
         async with httpx.AsyncClient(timeout=20) as http:
             response = await http.post(
                 "https://api.gladia.io/v2/live",
@@ -111,11 +171,15 @@ class GladiaClient:
                     f"Gladia session initialization failed (HTTP {response.status_code}): "
                     f"{detail or 'No error details returned.'}"
                 )
-            url = response.json().get("url")
+            session = response.json()
+            url = session.get("url")
+            session_id = session.get("id")
             if not isinstance(url, str) or not url.startswith("wss://"):
                 raise RuntimeError("Gladia returned no secure WebSocket URL.")
 
         async with connect(url, open_timeout=20, close_timeout=5) as socket:
+            stop_sent = asyncio.Event()
+
             async def send():
                 try:
                     async for chunk in audio:
@@ -124,6 +188,7 @@ class GladiaClient:
                 finally:
                     await audio.aclose()
                     await socket.send(json.dumps({"type": "stop_recording"}))
+                    stop_sent.set()
 
             async def receive():
                 async for raw in socket:
@@ -135,10 +200,7 @@ class GladiaClient:
                             results=data.get("results"),
                             error=self._safe_error(json.dumps(error)) if error else None,
                         )
-                        if on_summary is not None:
-                            on_summary(summary)
-                        elif summary.error:
-                            logging.getLogger(__name__).warning("Gladia summarization failed: %s", summary.error)
+                        deliver_summary(summary)
                         continue
                     if message.get("type") == "error" or message.get("error"):
                         raise RuntimeError("Gladia reported a streaming error.")
@@ -158,8 +220,12 @@ class GladiaClient:
                     [sender, receiver, stopper], return_when=asyncio.FIRST_COMPLETED,
                 )
                 if receiver in done:
-                    await receiver
-                    if not sender.done():
+                    try:
+                        await receiver
+                    except ConnectionClosedError:
+                        if not stop_sent.is_set() or self.summary_type is None:
+                            raise
+                    if not stop_sent.is_set():
                         raise RuntimeError("Gladia closed the stream before audio finished.")
                 if stopper in done and not sender.done():
                     sender.cancel()
@@ -167,10 +233,16 @@ class GladiaClient:
                 if isinstance(result[0], Exception):
                     raise result[0]
                 try:
-                    await asyncio.wait_for(receiver, timeout=30)
+                    await asyncio.wait_for(receiver, timeout=POST_STOP_TIMEOUT)
                 except asyncio.TimeoutError:
-                    raise RuntimeError("Timed out waiting for Gladia's final transcripts.") from None
+                    if self.summary_type is None:
+                        raise RuntimeError("Timed out waiting for Gladia's final transcripts.") from None
+                except ConnectionClosedError:
+                    if self.summary_type is None:
+                        raise
             finally:
                 for task in (sender, receiver, stopper):
                     task.cancel()
                 await asyncio.gather(sender, receiver, stopper, return_exceptions=True)
+        if self.summary_type is not None and not summary_received:
+            deliver_summary(await self._get_summary(session_id))

@@ -39,12 +39,33 @@ async def run(args):
     )
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()
-    previous = signal.signal(signal.SIGINT, lambda *_: loop.call_soon_threadsafe(stop.set))
+    task = asyncio.current_task()
+    forced = False
+
+    def interrupt():
+        nonlocal forced
+        if not stop.is_set():
+            stop.set()
+            print(
+                "Stopping… waiting for final transcripts and summary "
+                "(press Ctrl+C again to quit without them)",
+                file=sys.stderr, flush=True,
+            )
+        elif not forced:
+            forced = True
+            print("Quitting without remaining results.", file=sys.stderr, flush=True)
+            task.cancel()
+
+    previous = signal.signal(signal.SIGINT, lambda *_: loop.call_soon_threadsafe(interrupt))
     printer = TranscriptPrinter()
     audio = wav_audio(args.file) if args.file else microphone_audio(args.device)
     summaries = []
     try:
         await client.transcribe(audio, printer, stop, on_summary=summaries.append)
+    except asyncio.CancelledError:
+        if not forced:
+            raise
+        return 130
     finally:
         await audio.aclose()
         signal.signal(signal.SIGINT, previous)
@@ -89,8 +110,7 @@ def main():
             return 0
         if args.device and args.device.isdecimal():
             args.device = int(args.device)
-        asyncio.run(run(args))
-        return 0
+        return asyncio.run(run(args)) or 0
     except KeyboardInterrupt:
         return 130
     except Exception as exc:

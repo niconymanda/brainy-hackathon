@@ -209,6 +209,33 @@ class ClientTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("REDACTED", safe)
             self.assertNotIn("example.test", safe)
 
+    async def test_summary_fetch_http_error_and_missing_id(self):
+        client = GladiaClient("test-key")
+        self.assertIn("no session id", (await client._get_summary(None)).error)
+        http = AsyncMock()
+        http.__aenter__.return_value = http
+        http.get.return_value = httpx.Response(401, text="Invalid test-key wss://example.test/live")
+        with patch("brainy.stt.client.httpx.AsyncClient", return_value=http):
+            summary = await client._get_summary("session-123")
+        self.assertIn("HTTP 401", summary.error)
+        self.assertNotIn("test-key", summary.error)
+        self.assertNotIn("example.test", summary.error)
+
+    async def test_summary_fetch_retries_with_backoff(self):
+        http = AsyncMock()
+        http.__aenter__.return_value = http
+        http.get.side_effect = [
+            httpx.Response(503), httpx.ConnectError("offline"),
+            httpx.Response(200, json={"status": "done", "result": {
+                "summarization": {"results": "Recovered summary"},
+            }}),
+        ]
+        with patch("brainy.stt.client.httpx.AsyncClient", return_value=http):
+            with patch("brainy.stt.client.asyncio.sleep", new_callable=AsyncMock) as sleep:
+                summary = await GladiaClient("test-key")._get_summary("session-123")
+        self.assertEqual(summary.results, "Recovered summary")
+        self.assertEqual([call.args[0] for call in sleep.call_args_list], [1, 2])
+
     def test_missing_key(self):
         with self.assertRaisesRegex(ValueError, "GLADIA_API_KEY"):
             GladiaClient("")
