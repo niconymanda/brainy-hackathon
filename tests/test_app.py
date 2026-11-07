@@ -164,6 +164,7 @@ class HelperTests(unittest.TestCase):
 
 class FrenchTests(unittest.TestCase):
     def test_stuck_question_is_translated(self):
+        self.assertIn("Je continue", app_module.french_question(app_module.OUT_OF_BUDGET))
         q = app_module.french_question("I'm stuck: repeating 'Bouton Rechercher' has no visible effect. Should I try?")
         self.assertIn("Je bloque", q)
         self.assertIn("Bouton Rechercher", q)

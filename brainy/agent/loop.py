@@ -1,21 +1,35 @@
 import hashlib
 import re
+import time
 
 from .events import AgentError, AgentStep, ConfirmRequest, Done, NeedsUser
 from .debug import debug_log
 
 
 RISKY = re.compile(r"pay|payer|submit|envoyer|valider|book|réserver|confirm|acheter|order|commander", re.I)
+WRAP_UP = ("Search budget used up: stop searching now. Use ask_user to propose the best option seen so far "
+           "(say which constraint it does not meet), or say nothing suitable was found and offer to keep looking.")
+OUT_OF_BUDGET = "I couldn't find an option matching everything. Should I keep looking, or stop here?"
 SECRET_QUESTION = re.compile(r"\b(?:password|mot\s+de\s+passe|card|carte|cvv|cvc|code|pin|iban|otp|sms)\b", re.I)
 
 
 class WebAgent:
-    def __init__(self, client, browser, ask, max_steps=25, debug=False):
+    def __init__(self, client, browser, ask, max_steps=25, debug=False,
+                 wrap_up_steps=None, wrap_up_seconds=None, wrap_up_grace=6):
+        """wrap_up_*: after this many steps/seconds without user input, tell the model to stop searching
+        and propose the best option; if it still has not asked after wrap_up_grace steps, ask the user."""
         self.client = client
         self.browser = browser
         self.ask = ask
         self.max_steps = max_steps
         self.debug = debug
+        self.wrap_up_steps = wrap_up_steps
+        self.wrap_up_seconds = wrap_up_seconds
+        self.wrap_up_grace = wrap_up_grace
+
+    def _over_budget(self, steps, started):
+        return ((self.wrap_up_steps is not None and steps >= self.wrap_up_steps) or
+                (self.wrap_up_seconds is not None and time.monotonic() - started >= self.wrap_up_seconds))
 
     async def run(self, goal, start_url=None):
         history = []
@@ -23,6 +37,7 @@ class WebAgent:
         last_key = None
         unchanged_count = 0
         step = "navigate"
+        budget_steps, budget_start, nudged_at = 0, time.monotonic(), None
         try:
             await self.browser.start_run()
             if start_url:
@@ -46,6 +61,10 @@ class WebAgent:
                         history.append(f"Your last {key[0]} on '{target}' had no visible effect; do not repeat it, "
                                        "try a different approach (e.g. results may already be shown, scroll, "
                                        "choose a suggestion first, or ask the user).")
+                if nudged_at is None and self._over_budget(budget_steps, budget_start):
+                    history.append(WRAP_UP)
+                    nudged_at = budget_steps
+                budget_steps += 1
                 step = "model call"
                 action = await self.client.decide(screenshot, goal, history, page_context=page_context)
                 key = (action.action, " ".join(action.target.casefold().split()))
@@ -59,6 +78,8 @@ class WebAgent:
                                 "Should I try a different approach, or can you do it manually and reply ok?")
                 elif action.action == "ask_user":
                     question = action.text or action.narration
+                elif nudged_at is not None and budget_steps - nudged_at > self.wrap_up_grace:
+                    question = OUT_OF_BUDGET
                 if question is not None:
                     yield NeedsUser(question)
                     step = "user answer"
@@ -72,6 +93,7 @@ class WebAgent:
                         history.append("User answered: " + answer)
                     last_key = None
                     unchanged_count = 0
+                    budget_steps, budget_start, nudged_at = 0, time.monotonic(), None
                     continue
                 if action.action == "confirm" or (
                     action.action == "click" and RISKY.search(action.target + " " + action.narration)
@@ -83,6 +105,7 @@ class WebAgent:
                     if (await self.ask(question)).strip().casefold() not in {"yes", "oui"}:
                         yield Done("Action skipped: confirmation refused. Nothing was submitted.")
                         return
+                    budget_steps, budget_start, nudged_at = 0, time.monotonic(), None
                 if action.action == "navigate":
                     step = "navigate"
                     await self.browser.goto(action.url)
