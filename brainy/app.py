@@ -282,8 +282,9 @@ class Session:
             return
         if self.answer and not self.answer.done():
             # An open answer like "non, plutôt lundi à 13h" is passed on as is, not read as "stop".
-            if self.confirming or len(text.split()) <= 3:
-                text = "oui" if YES.search(text) else "non" if NO.search(text) else text
+            match = YES.match(text) or NO.match(text)
+            if match and (self.confirming or not re.search(r"\w", text[match.end():])):
+                text = "oui" if YES.match(text) else "non"
             self.reply(text)
             return
         if self.app.agent_task and not self.app.agent_task.done():

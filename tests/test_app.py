@@ -170,10 +170,10 @@ class AppTests(unittest.IsolatedAsyncioTestCase):
                 await ws.recv()
                 await ws.send(json.dumps({"type": "user_text", "text": "Un dermato"}))
                 await self.recv_until(ws, "needs_user")
-                await ws.send(json.dumps({"type": "user_text", "text": "Non, plutôt lundi à 13h"}))
+                await ws.send(json.dumps({"type": "user_text", "text": "Non, plutôt lundi"}))
                 events = await self.recv_until(ws, "done")
         self.assertTrue(events[-1]["ok"])
-        self.assertIn("User answered: Non, plutôt lundi à 13h", FakeHolo.history)
+        self.assertIn("User answered: Non, plutôt lundi", FakeHolo.history)
 
     async def test_refused_confirmation_clicks_nothing(self):
         async with connect("ws://127.0.0.1:8799/ws") as ws:
