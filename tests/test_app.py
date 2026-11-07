@@ -160,3 +160,14 @@ class HelperTests(unittest.TestCase):
         self.assertTrue(app_module.YES.search("Oui, parfait, merci !"))
         self.assertFalse(app_module.YES.search("Non"))
         self.assertTrue(app_module.NO.search("non merci"))
+
+
+class FrenchTests(unittest.TestCase):
+    def test_stuck_question_is_translated(self):
+        q = app_module.french_question("I'm stuck: repeating 'Bouton Rechercher' has no visible effect. Should I try?")
+        self.assertIn("Je bloque", q)
+        self.assertIn("Bouton Rechercher", q)
+
+    def test_doctolib_tip_only_for_doctolib(self):
+        self.assertIn("doctolib.fr/dermatologue/paris", app_module.site_tips("Cherche sur Doctolib"))
+        self.assertEqual(app_module.site_tips("Commande une pizza"), "")

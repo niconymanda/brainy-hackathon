@@ -45,6 +45,27 @@ YES = re.compile(r"^\W*(oui|yes|ouais|vas-y|go|ok|okay|d'accord|parfait|c'est bo
 NO = re.compile(r"^\W*(non|no|stop|arrête|annule)\b", re.I)
 FRENCH = ("\nLanguage: write every narration and question in French, as one short spoken sentence "
           "addressed to the user (tutoiement).")
+SITE_TIPS = {
+    "doctolib": ("\nDoctolib tip: to search, navigate directly to https://www.doctolib.fr/<specialty>/<city> "
+                 "(lowercase, hyphens, e.g. https://www.doctolib.fr/dermatologue/paris) instead of the search bar. "
+                 "If you use the search bar, pick a suggestion in the dropdown before pressing Rechercher."),
+}
+STUCK = re.compile(r"^I'm stuck: repeating '(.*)' has no visible effect\.", re.S)
+
+
+def french_question(text):
+    stuck = STUCK.match(text)
+    if stuck:
+        return (f"Je bloque : « {stuck.group(1)} » ne donne rien. "
+                "Je tente autre chose ? Ou fais-le à la main et dis-moi « ok ».")
+    return text
+
+
+def site_tips(text):
+    lowered = text.lower()
+    return "".join(tip for name, tip in SITE_TIPS.items() if name in lowered)
+
+
 SILENCE_SECONDS = float(os.getenv("BRAINY_SILENCE", "2.0"))
 MAX_LISTEN_SECONDS = 60
 
@@ -238,14 +259,14 @@ class Session:
             key = os.getenv("H_API_KEY") or os.getenv("HCOMPANY_API_KEY", "")
             client = HoloClient(key, self.app.args.model)
             browser = await self.app.get_browser()
-            goal = build_h_prompt(request, request) + FRENCH
+            goal = build_h_prompt(request, request) + FRENCH + site_tips(request)
             agent = WebAgent(client, browser, self.ask, max_steps=self.app.args.max_steps)
             async for event in agent.run(goal, start_url_for(request)):
                 if isinstance(event, AgentStep):
                     if event.action not in {"done", "ask_user", "confirm"}:
                         self.emit(type="agent_step", narration=event.narration, action=event.action)
                 elif isinstance(event, NeedsUser):
-                    self.emit(type="needs_user", question=event.question)
+                    self.emit(type="needs_user", question=french_question(event.question))
                 elif isinstance(event, ConfirmRequest):
                     self.emit(type="confirm_request", summary=event.summary)
                 elif isinstance(event, Done):
