@@ -160,6 +160,8 @@ class HelperTests(unittest.TestCase):
         self.assertTrue(app_module.YES.search("Oui, parfait, merci !"))
         self.assertFalse(app_module.YES.search("Non"))
         self.assertTrue(app_module.NO.search("non merci"))
+        for text in ("On s'arrête là.", "arrêter", "Laisse tomber"):
+            self.assertTrue(app_module.NO.search(text), text)
 
 
 class FrenchTests(unittest.TestCase):

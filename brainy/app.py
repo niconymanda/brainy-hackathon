@@ -42,7 +42,7 @@ SITES = {
     "amazon": "https://www.amazon.fr",
 }
 YES = re.compile(r"^\W*(oui|yes|ouais|vas-y|go|ok|okay|d'accord|parfait|c'est bon|confirme)\b", re.I)
-NO = re.compile(r"^\W*(non|no|stop|arrête|annule)\b", re.I)
+NO = re.compile(r"^\W*(non|no|stop|arr[êe]t\w*|annule|on s['’]arr[êe]te|laisse tomber)\b", re.I)
 FRENCH = ("\nLanguage: write every narration and question in French, as one short spoken sentence "
           "addressed to the user (tutoiement).")
 BUDGET = ("\nSearch limit: if nothing matches every constraint after checking about 3 practitioners or dates, "
