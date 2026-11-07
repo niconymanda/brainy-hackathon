@@ -125,6 +125,7 @@ def open_profile():
     HOME.mkdir(parents=True, exist_ok=True)
     if not PROFILE_FILE.exists():
         PROFILE_FILE.write_text(PROFILE_TEMPLATE, encoding="utf-8")
+        PROFILE_FILE.chmod(0o600)
     if sys.platform == "win32":
         os.startfile(PROFILE_FILE)
     elif sys.platform == "darwin":
