@@ -1,5 +1,5 @@
 """Reusable real-time speech transcription."""
 
-from .client import GladiaClient, Transcript
+from .client import GladiaClient, Summary, Transcript
 
-__all__ = ["GladiaClient", "Transcript"]
+__all__ = ["GladiaClient", "Summary", "Transcript"]
