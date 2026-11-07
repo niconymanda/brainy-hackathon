@@ -284,7 +284,7 @@ class Session:
         if self.answer and not self.answer.done():
             # An open answer like "non, plutôt lundi à 13h" is passed on as is, not read as "stop".
             match = YES.match(text) or NO.match(text)
-            if match and (self.confirming or not re.search(r"\w", text[match.end():])):
+            if match and (self.confirming or not re.search(r"\w", re.sub(r"merci|beaucoup", "", text[match.end():], flags=re.I))):
                 text = "oui" if YES.match(text) else "non"
             self.reply(text)
             return
