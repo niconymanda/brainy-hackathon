@@ -540,7 +540,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await browser.type("Lyon"), "Lyon")
         browser.page.locator.assert_called_once_with(":focus")
         field.fill.assert_awaited_once_with("")
-        field.press_sequentially.assert_awaited_once_with("Lyon", delay=65)
+        field.press_sequentially.assert_awaited_once_with("Lyon", delay=25)
         browser.page.wait_for_timeout.assert_awaited_once_with(1000)
         browser.page.keyboard.press.assert_not_called()
 
