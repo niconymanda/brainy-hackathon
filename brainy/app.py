@@ -26,7 +26,7 @@ from websockets.http11 import Response
 from brainy.agent.browser import Browser
 from brainy.agent.events import AgentError, AgentStep, ConfirmRequest, Done, NeedsUser
 from brainy.agent.holo import HoloClient
-from brainy.agent.loop import OUT_OF_BUDGET, WebAgent
+from brainy.agent.loop import OUT_OF_BUDGET, SECRET_QUESTION, WebAgent
 from brainy.h_task import build_h_prompt
 
 DIST = Path(__file__).resolve().parents[1] / "frontend" / "dist"
@@ -50,7 +50,15 @@ AUTONOMY = ("\nAutonomy: the user is delegating and does not want to be interrup
             "as correct, keep prefilled fields and continue without asking. Make reasonable choices yourself (first "
             "available slot matching the request, the visit reason closest to the request). Use ask_user only when a "
             "required choice truly cannot be inferred from the request or the account (e.g. which family member). "
-            "Never ask to confirm intermediate steps; the only confirmation is right before the final booking or payment.")
+            "If there is only one option (e.g. a single patient profile), select it. The specialty or category the "
+            "user named is settled: never ask about it. Never ask to confirm intermediate steps; use confirm only for "
+            "the final irreversible button (e.g. 'Confirmer le rendez-vous', 'Payer').")
+OBVIOUS = re.compile(r"^\W*(est-ce que|veux-tu|tu veux|voulez-vous|je confirme|confirmes?-tu|dois-je|je peux|puis-je|"
+                     r"peux-tu confirmer|c'est bien|ok pour|je (prends|sélectionne|choisis|continue|valide))|"
+                     r"\b(est-(il|elle)|bien)\b", re.I)
+OPEN_QUESTION = re.compile(r"\b(quel|quelle|quels|quelles|lequel|laquelle|combien|quand|où|comment|pourquoi|ou(?! (pas|non)\W*$))\b", re.I)
+AUTO_REPLY = ("Oui. Ne me demande pas de valider les étapes intermédiaires : choisis l'option la plus logique d'après "
+              "ma demande et mon compte, et continue jusqu'à la confirmation finale.")
 BUDGET = ("\nSearch limit: if nothing matches every constraint after checking about 3 practitioners or dates, "
           "stop searching and use ask_user to propose the closest option, saying which constraint it does not meet.")
 SITE_TIPS = {
@@ -69,6 +77,12 @@ def french_question(text):
     if text == OUT_OF_BUDGET:
         return "Ça prend plus de temps que prévu. Je continue, ou on s'arrête là ?"
     return text
+
+
+def obvious_question(question):
+    """Yes/no check-ins the agent should settle itself; open questions, secrets and the budget check go to the user."""
+    return (bool(OBVIOUS.search(question)) and not OPEN_QUESTION.search(question)
+            and not SECRET_QUESTION.search(question) and question != french_question(OUT_OF_BUDGET))
 
 
 def site_tips(text):
@@ -153,6 +167,7 @@ class Session:
         self.listen_task = None
         self.stop = None
         self.answer = None
+        self.auto_reply = None
 
     def emit(self, **event):
         self.outbox.put_nowait(event)
@@ -255,6 +270,9 @@ class Session:
         self.app.agent_task = asyncio.create_task(self.run_agent(text))
 
     async def ask(self, question):
+        if self.auto_reply:
+            reply, self.auto_reply = self.auto_reply, None
+            return reply
         self.answer = asyncio.get_running_loop().create_future()
         try:
             return await self.answer
@@ -273,13 +291,20 @@ class Session:
             args = self.app.args
             agent = WebAgent(client, browser, self.ask, max_steps=args.max_steps,
                              wrap_up_steps=getattr(args, "search_steps", None),
-                             wrap_up_seconds=getattr(args, "search_seconds", None), wrap_up_grace=15)
+                             wrap_up_seconds=getattr(args, "search_seconds", None), wrap_up_grace=15,
+                             gate_narration=False)
             async for event in agent.run(goal, start_url_for(request)):
                 if isinstance(event, AgentStep):
                     if event.action not in {"done", "ask_user", "confirm"}:
                         self.emit(type="agent_step", narration=event.narration or "Je continue.", action=event.action)
                 elif isinstance(event, NeedsUser):
-                    self.emit(type="needs_user", question=french_question(event.question))
+                    question = french_question(event.question)
+                    if not event.after_budget and obvious_question(question):
+                        self.auto_reply = AUTO_REPLY
+                        self.emit(type="agent_step", narration="Je choisis l'option évidente et je continue.",
+                                  action="auto")
+                    else:
+                        self.emit(type="needs_user", question=question)
                 elif isinstance(event, ConfirmRequest):
                     self.emit(type="confirm_request", summary=event.summary)
                 elif isinstance(event, Done):

@@ -10,6 +10,7 @@ class AgentStep:
 @dataclass(frozen=True)
 class NeedsUser:
     question: str
+    after_budget: bool = False
 
 
 @dataclass(frozen=True)

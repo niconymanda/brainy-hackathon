@@ -55,7 +55,7 @@ class FakeHolo:
         self.steps = iter(self.script)
 
     async def decide(self, screenshot, goal, history, page_context=None):
-        FakeHolo.goal = goal
+        FakeHolo.goal, FakeHolo.history = goal, list(history)
         return next(self.steps)
 
     async def locate(self, screenshot, description, viewport):
@@ -115,6 +115,52 @@ class AppTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(events[-1]["items"][0]["status"], "Terminé")
             self.assertEqual(self.browser.clicks, 2)
 
+    async def test_obvious_question_answered_without_user(self):
+        script = [Action("ask_user", text="Est-ce que je prends le rendez-vous pour toi ?"),
+                  Action("done", text="Fini.")]
+        with patch.object(FakeHolo, "script", script):
+            async with connect("ws://127.0.0.1:8799/ws") as ws:
+                await ws.recv()
+                await ws.send(json.dumps({"type": "user_text", "text": "Un dermato"}))
+                events = await self.recv_until(ws, "done")
+        self.assertNotIn("needs_user", [e["type"] for e in events])
+        self.assertTrue(events[-1]["ok"])
+
+    async def test_mic_click_answers_a_question(self):
+        class FakeGladia:
+            def __init__(self, *args):
+                pass
+
+            async def transcribe(self, audio, on_transcript, stop):
+                on_transcript(type("T", (), {"text": "Pour Léo", "is_final": True})())
+                await stop.wait()
+
+        script = [Action("ask_user", text="Pour Léo ou pour Inès ?"), Action("done", text="Fini.")]
+        with patch.object(FakeHolo, "script", script), patch.object(app_module, "SILENCE_SECONDS", 0.1), \
+                patch("brainy.stt.client.GladiaClient", FakeGladia), \
+                patch("brainy.stt.audio.microphone_audio", lambda device: None):
+            async with connect("ws://127.0.0.1:8799/ws") as ws:
+                await ws.recv()
+                await ws.send(json.dumps({"type": "user_text", "text": "Un dentiste"}))
+                await self.recv_until(ws, "needs_user")
+                await ws.send(json.dumps({"type": "start_listening"}))
+                events = await self.recv_until(ws, "done")
+        kinds = [e["type"] for e in events]
+        self.assertLess(kinds.index("listening"), kinds.index("transcript"))
+        self.assertTrue(events[-1]["ok"])
+        self.assertIn("Pour Léo", json.dumps(FakeHolo.history, ensure_ascii=False))
+
+    async def test_question_after_budget_goes_to_user(self):
+        script = [Action("scroll", text="down"), Action("ask_user", text="Est-ce que je continue ou pas ?"),
+                  Action("done", text="Fini.")]
+        with patch.object(FakeHolo, "script", script), \
+                patch("brainy.agent.loop.WebAgent._over_budget", lambda *a: True):
+            async with connect("ws://127.0.0.1:8799/ws") as ws:
+                await ws.recv()
+                await ws.send(json.dumps({"type": "user_text", "text": "Un dermato"}))
+                events = await self.recv_until(ws, "needs_user")
+        self.assertEqual(events[-1]["question"], "Est-ce que je continue ou pas ?")
+
     async def test_refused_confirmation_clicks_nothing(self):
         async with connect("ws://127.0.0.1:8799/ws") as ws:
             await ws.recv()
@@ -157,6 +203,17 @@ class HelperTests(unittest.TestCase):
     def test_start_url(self):
         self.assertEqual(app_module.start_url_for("Prends-moi un RDV sur Doctolib"), "https://www.doctolib.fr")
         self.assertIsNone(app_module.start_url_for("Réserve un restaurant"))
+
+    def test_obvious_questions(self):
+        for q in ("Est-ce que tu veux bien que je prenne le rendez-vous pour toi ?",
+                  "Je confirme la sélection de la catégorie dermatologue ?",
+                  "Ton nom de naissance est-il Esposito-Farès ?", "Est-ce que je continue ou pas ?"):
+            self.assertTrue(app_module.obvious_question(q), q)
+        for q in ("Quel âge a le patient ?", "Peux-tu entrer ton mot de passe ?",
+                  "Pour Léo ou pour Inès ?", "Est-ce que je réserve pour Léo ou pour Inès ?",
+                  "Est-ce que je choisis un billet remboursable ou non remboursable ?",
+                  app_module.french_question(app_module.OUT_OF_BUDGET)):
+            self.assertFalse(app_module.obvious_question(q), q)
 
     def test_yes_no(self):
         self.assertTrue(app_module.YES.search("Oui, parfait, merci !"))

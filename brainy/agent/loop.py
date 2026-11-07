@@ -16,7 +16,7 @@ SECRET_QUESTION = re.compile(r"\b(?:password|mot\s+de\s+passe|card|carte|cvv|cvc
 
 class WebAgent:
     def __init__(self, client, browser, ask, max_steps=25, debug=False,
-                 wrap_up_steps=None, wrap_up_seconds=None, wrap_up_grace=6):
+                 wrap_up_steps=None, wrap_up_seconds=None, wrap_up_grace=6, gate_narration=True):
         """wrap_up_*: after this many steps/seconds without user input, tell the model to stop searching
         and propose the best option; if it still has not asked after wrap_up_grace steps, ask the user."""
         self.client = client
@@ -27,6 +27,14 @@ class WebAgent:
         self.wrap_up_steps = wrap_up_steps
         self.wrap_up_seconds = wrap_up_seconds
         self.wrap_up_grace = wrap_up_grace
+        self.gate_narration = gate_narration
+
+    def _needs_confirmation(self, action):
+        if not self.gate_narration:
+            # Clicks are gated on the element's label only: narrations like "je confirme la sélection" are not risky.
+            return action.action == "confirm" or (action.action == "click" and bool(RISKY.search(action.target)))
+        return action.action == "confirm" or (
+            action.action == "click" and RISKY.search(action.target + " " + action.narration))
 
     def _over_budget(self, steps, started):
         return ((self.wrap_up_steps is not None and steps >= self.wrap_up_steps) or
@@ -82,7 +90,7 @@ class WebAgent:
                 elif nudged_at is not None and budget_steps - nudged_at > self.wrap_up_grace:
                     question = OUT_OF_BUDGET
                 if question is not None:
-                    yield NeedsUser(question)
+                    yield NeedsUser(question, after_budget=nudged_at is not None)
                     step = "user answer"
                     answer = await self.ask(question)
                     if answer.strip().casefold() in {"stop", "non", "no"}:
@@ -96,9 +104,7 @@ class WebAgent:
                     unchanged_count = 0
                     budget_steps, budget_start, nudged_at = 0, time.monotonic(), None
                     continue
-                if action.action == "confirm" or (
-                    action.action == "click" and RISKY.search(action.target + " " + action.narration)
-                ):
+                if self._needs_confirmation(action):
                     summary = action.narration or action.target
                     question = summary + " Proceed? (yes/oui or no/non)"
                     yield ConfirmRequest(summary)
