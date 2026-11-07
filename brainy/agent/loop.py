@@ -90,7 +90,7 @@ class WebAgent:
                 elif nudged_at is not None and budget_steps - nudged_at > self.wrap_up_grace:
                     question = OUT_OF_BUDGET
                 if question is not None:
-                    yield NeedsUser(question)
+                    yield NeedsUser(question, after_budget=nudged_at is not None)
                     step = "user answer"
                     answer = await self.ask(question)
                     if answer.strip().casefold() in {"stop", "non", "no"}:

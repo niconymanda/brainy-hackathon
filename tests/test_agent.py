@@ -124,6 +124,13 @@ class AgentTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.browser.scroll.await_count, 4)
         self.assertIsInstance(events[-1], Done)
 
+    async def test_question_after_budget_is_flagged(self):
+        self.ask.return_value = "non"
+        events, _ = await self.run_budget(
+            [Action("scroll", text="down"), Action("ask_user", text="Est-ce que je continue ou pas ?")],
+            wrap_up_steps=1, wrap_up_grace=5)
+        self.assertEqual([e.after_budget for e in events if isinstance(e, NeedsUser)], [True])
+
     async def test_search_budget_resets_after_answer(self):
         self.ask.return_value = "continue"
         events, histories = await self.run_budget(

@@ -299,7 +299,7 @@ class Session:
                         self.emit(type="agent_step", narration=event.narration or "Je continue.", action=event.action)
                 elif isinstance(event, NeedsUser):
                     question = french_question(event.question)
-                    if obvious_question(question):
+                    if not event.after_budget and obvious_question(question):
                         self.auto_reply = AUTO_REPLY
                         self.emit(type="agent_step", narration="Je choisis l'option évidente et je continue.",
                                   action="auto")

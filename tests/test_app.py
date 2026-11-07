@@ -150,6 +150,17 @@ class AppTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(events[-1]["ok"])
         self.assertIn("Pour Léo", json.dumps(FakeHolo.history, ensure_ascii=False))
 
+    async def test_question_after_budget_goes_to_user(self):
+        script = [Action("scroll", text="down"), Action("ask_user", text="Est-ce que je continue ou pas ?"),
+                  Action("done", text="Fini.")]
+        with patch.object(FakeHolo, "script", script), \
+                patch("brainy.agent.loop.WebAgent._over_budget", lambda *a: True):
+            async with connect("ws://127.0.0.1:8799/ws") as ws:
+                await ws.recv()
+                await ws.send(json.dumps({"type": "user_text", "text": "Un dermato"}))
+                events = await self.recv_until(ws, "needs_user")
+        self.assertEqual(events[-1]["question"], "Est-ce que je continue ou pas ?")
+
     async def test_refused_confirmation_clicks_nothing(self):
         async with connect("ws://127.0.0.1:8799/ws") as ws:
             await ws.recv()
