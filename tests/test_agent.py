@@ -6,7 +6,7 @@ from argparse import ArgumentParser, Namespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
-from playwright.async_api import Error
+from playwright.async_api import Error, TimeoutError as PlaywrightTimeoutError
 
 from brainy.agent.browser import Browser, SecretFieldError
 from brainy.agent.debug import debug_log
@@ -66,6 +66,8 @@ class AgentTests(unittest.IsolatedAsyncioTestCase):
                   max_steps=1, choices=["Consultation"]).run("test")]
         self.browser.select_choice.assert_awaited_once_with(self.browser.find_choice.return_value, "Consultation")
         self.client.decide.assert_not_awaited()
+        self.browser.screenshot.assert_not_awaited()
+        self.browser.page_context.assert_not_awaited()
         self.assertEqual(events[0], AgentStep("Selecting Consultation.", "select_text"))
         self.assertIsInstance(events[-1], AgentError)
 
@@ -133,6 +135,8 @@ class AgentTests(unittest.IsolatedAsyncioTestCase):
                          ["Selecting Accepter.", "Typing Lyon.", "Selecting Lyon centre.", ""])
         self.client.decide.assert_awaited_once()
         self.browser.find_fill.assert_awaited_once_with("ville")
+        self.browser.screenshot.assert_awaited_once()
+        self.browser.page_context.assert_awaited_once()
         self.browser.fill_field.assert_awaited_once_with(self.browser.find_fill.return_value, "Lyon")
         self.assertIn("field now contains 'Lyon'", str(self.client.decide.call_args.args[2]))
         self.assertEqual(queue[0], ("choose", "Accepter"))
@@ -484,13 +488,12 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         browser.page = self.page_mock()
         frame = MagicMock()
         browser.page.frames = [frame]
-        matches = frame.locator.return_value
-        matches.count = AsyncMock(return_value=1)
-        element = matches.nth.return_value
+        frame.evaluate = AsyncMock(return_value={"rank": 0, "metadata": {"type": kind, "labels": labels}})
+        element = frame.locator.return_value
         element.is_visible = AsyncMock(return_value=True)
         element.is_enabled = AsyncMock(return_value=True)
         element.is_editable = AsyncMock(return_value=True)
-        element.evaluate = AsyncMock(return_value={"type": kind, "labels": labels})
+        element.evaluate = AsyncMock(return_value=True)
         return browser, element
 
     async def test_fill_matches_each_field_attribute(self):
@@ -500,9 +503,14 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
                 labels[index] = "Nom, SPÉCIALITÉ, établissement..."
                 browser, element = self.fill_browser(labels)
                 self.assertIs(await browser.find_fill("  specialite "), element)
-                script = element.evaluate.call_args.args[0]
+                frame = browser.page.frames[0]
+                frame.evaluate.assert_awaited_once()
+                script, args = frame.evaluate.call_args.args
+                self.assertEqual(args["target"], "specialite")
+                self.assertEqual(args["mode"], "fill")
                 for attribute in ("placeholder", "aria-label", "el.labels", "name"):
                     self.assertIn(attribute, script)
+                element.evaluate.assert_not_awaited()
                 element.click.assert_not_called()
 
     async def test_fill_supports_textarea_and_editable_combobox(self):
@@ -515,6 +523,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         for case in ("not found", "hidden", "disabled", "readonly", "wrong type", "empty"):
             with self.subTest(case=case):
                 browser, element = self.fill_browser(["Ville"], "hidden" if case == "wrong type" else "text")
+                browser.page.frames[0].evaluate.return_value = None
                 if case in ("hidden", "disabled", "readonly"):
                     getattr(element, {"hidden": "is_visible", "disabled": "is_enabled", "readonly": "is_editable"}[case]).return_value = False
                 field = "" if case == "empty" else "specialite" if case == "not found" else "ville"
@@ -537,7 +546,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         browser.type = AsyncMock(return_value="Lyon")
         browser._fill_metadata = AsyncMock(return_value={"type": "text", "labels": ["Ville"]})
         self.assertEqual(await browser.fill_field(element, "Lyon"), "Lyon")
-        element.click.assert_awaited_once()
+        element.click.assert_awaited_once_with(timeout=500, no_wait_after=True)
         browser.type.assert_awaited_once_with("Lyon")
         browser.type.reset_mock()
         browser._fill_metadata.return_value = {"type": "password", "labels": ["Ville"]}
@@ -547,9 +556,64 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_find_choice_uses_exact_non_clicking_resolution(self):
         browser = Browser()
-        browser.select_text = AsyncMock(return_value="element")
+        browser._find_direct = AsyncMock(return_value="element")
         self.assertEqual(await browser.find_choice("Consultation"), "element")
-        browser.select_text.assert_awaited_once_with("Consultation", exact=True, find_only=True)
+        browser._find_direct.assert_awaited_once_with("choose", "Consultation")
+
+    async def test_direct_missing_choice_has_one_evaluate_and_no_locator_wait(self):
+        browser, element = self.fill_browser([])
+        frame = browser.page.frames[0]
+        frame.evaluate.return_value = None
+        self.assertIsNone(await browser.find_choice("Absent"))
+        frame.evaluate.assert_awaited_once()
+        frame.locator.assert_not_called()
+
+    async def test_direct_click_timeout_uses_coordinates(self):
+        browser = Browser()
+        browser.page = self.page_mock()
+        browser.page.mouse.click = AsyncMock()
+        element = MagicMock()
+        element.click = AsyncMock(side_effect=PlaywrightTimeoutError("covered"))
+        element.bounding_box = AsyncMock(return_value={"x": 10, "y": 20, "width": 100, "height": 40})
+        self.assertTrue(await browser._direct_click(element))
+        element.click.assert_awaited_once_with(timeout=500, no_wait_after=True)
+        element.bounding_box.assert_awaited_once_with(timeout=300)
+        browser.page.mouse.click.assert_awaited_once_with(60, 40)
+        element.bounding_box.return_value = None
+        self.assertFalse(await browser._direct_click(element))
+
+    async def test_direct_fill_does_not_type_if_covered_click_misses_focus(self):
+        browser, element = self.fill_browser(["Ville"])
+        browser._direct_click = AsyncMock(return_value=True)
+        element.evaluate.return_value = False
+        browser.type = AsyncMock()
+        self.assertIsNone(await browser.fill_field(element, "Lyon"))
+        browser.type.assert_not_awaited()
+
+    async def test_direct_choice_skips_page_load_wait(self):
+        browser = Browser()
+        browser._wait_for_page = AsyncMock()
+        browser._direct_click = AsyncMock(return_value=True)
+        matches = MagicMock()
+        matches.count = AsyncMock(return_value=1)
+        element = matches.nth.return_value
+        element.evaluate = AsyncMock(side_effect=[{"tag": "BUTTON"}, "Consultation", {}])
+        element.is_visible = AsyncMock(return_value=True)
+        self.assertIn("Selected", await browser.select_choice(matches, "Consultation"))
+        browser._wait_for_page.assert_not_awaited()
+        element.scroll_into_view_if_needed.assert_not_called()
+
+    async def test_direct_radio_missed_coordinate_click_is_not_consumed(self):
+        browser = Browser()
+        browser._direct_click = AsyncMock(return_value=True)
+        matches = MagicMock()
+        matches.count = AsyncMock(return_value=1)
+        element = matches.nth.return_value
+        element.evaluate = AsyncMock(side_effect=[{"tag": "INPUT", "type": "radio"}, "Patient", {"checked": False}])
+        element.is_visible = AsyncMock(return_value=True)
+        element.check = AsyncMock(side_effect=PlaywrightTimeoutError("covered"))
+        self.assertIsNone(await browser.select_choice(matches, "Patient"))
+        element.check.assert_awaited_once_with(timeout=500, no_wait_after=True)
 
     async def test_empty_choice_is_not_resolved(self):
         browser = Browser()

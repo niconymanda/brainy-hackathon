@@ -31,6 +31,44 @@ class WebAgent:
             if start_url:
                 await self.browser.goto(start_url)
             for _ in range(self.max_steps):
+                history.extend(await self.browser.take_recovery_notes())
+                if queue and queue[0][0] == "fill":
+                    _, field, text = queue[0]
+                    step = "type"
+                    try:
+                        element = await self.browser.find_fill(field)
+                        value = await self.browser.fill_field(element, text) if element is not None else None
+                    except SecretFieldError:
+                        warning = "Skipped secret-like fill field; complete it manually."
+                        yield AgentStep(warning, "fill")
+                        history.append(warning)
+                        queue.pop(0)
+                        continue
+                    if value is not None:
+                        yield AgentStep(f"Typing {text}.", "type")
+                        history.append(f"Filled {field!r} directly; field now contains {value!r}. "
+                                       "Choose a matching autocomplete suggestion before searching.")
+                        queue.pop(0)
+                        pending = last_key = None
+                        unchanged_count = 0
+                        continue
+                if queue and queue[0][0] == "choose" and not RISKY.search(queue[0][1]):
+                    step = "select_text"
+                    selected = False
+                    for text in queue[0][1].split("|"):
+                        element = await self.browser.find_choice(text.strip())
+                        if element is not None:
+                            result = await self.browser.select_choice(element, text.strip())
+                            if result is not None:
+                                yield AgentStep(f"Selecting {text.strip()}.", "select_text")
+                                history.extend([f"Selected {text.strip()} directly", result])
+                                queue.pop(0)
+                                pending = last_key = None
+                                unchanged_count = 0
+                                selected = True
+                                break
+                    if selected:
+                        continue
                 step = "screenshot"
                 screenshot = await self.browser.screenshot()
                 step = "page context"
@@ -52,41 +90,6 @@ class WebAgent:
                         history.append(f"Your last {key[0]} on '{target}' had no visible effect; do not repeat it, "
                                        "try a different approach (e.g. results may already be shown, scroll, "
                                        "choose a suggestion first, or ask the user).")
-                if queue and queue[0][0] == "fill":
-                    _, field, text = queue[0]
-                    step = "type"
-                    try:
-                        element = await self.browser.find_fill(field)
-                        value = await self.browser.fill_field(element, text) if element is not None else None
-                    except SecretFieldError:
-                        warning = "Skipped secret-like fill field; complete it manually."
-                        yield AgentStep(warning, "fill")
-                        history.append(warning)
-                        queue.pop(0)
-                        continue
-                    if value is not None:
-                        yield AgentStep(f"Typing {text}.", "type")
-                        history.append(f"Filled {field!r} directly; field now contains {value!r}. "
-                                       "Choose a matching autocomplete suggestion before searching.")
-                        queue.pop(0)
-                        pending = (("type", normalize_choice(field)), signature, field)
-                        continue
-                if queue and queue[0][0] == "choose" and not RISKY.search(queue[0][1]):
-                    step = "select_text"
-                    selected = False
-                    for text in queue[0][1].split("|"):
-                        element = await self.browser.find_choice(text.strip())
-                        if element is not None:
-                            result = await self.browser.select_choice(element, text.strip())
-                            if result is not None:
-                                yield AgentStep(f"Selecting {text.strip()}.", "select_text")
-                                history.extend([f"Selected {text.strip()} directly", result])
-                                queue.pop(0)
-                                pending = (("select_text", " ".join(text.casefold().split())), signature, text)
-                                selected = True
-                                break
-                    if selected:
-                        continue
                 step = "model call"
                 action = await self.client.decide(screenshot, goal, history, page_context=page_context)
                 target = action.text if action.action == "select_text" else action.target
