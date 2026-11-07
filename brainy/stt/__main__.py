@@ -70,7 +70,9 @@ def main():
         return 130
     except Exception as exc:
         # Transport exceptions can contain the signed session URL; never print it.
-        if isinstance(exc, (ValueError, RuntimeError, OSError, wave.Error)):
+        if isinstance(exc, ModuleNotFoundError):
+            message = f"Missing Python package '{exc.name}'. Run: pip install -r requirements.txt"
+        elif isinstance(exc, (ValueError, RuntimeError, OSError, wave.Error)):
             message = str(exc)
         else:
             message = f"{type(exc).__name__}: check connectivity, audio device and Gladia configuration."
