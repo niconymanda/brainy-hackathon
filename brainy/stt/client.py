@@ -47,6 +47,13 @@ class GladiaClient:
                 "receive_partial_transcripts": True,
                 "receive_final_transcripts": True,
             },
+            "post_processing": {
+                "summarization": True,
+                "summarization_config": {
+                    "type": "bullet_points"
+                }
+            },
+            "maximum_duration_without_endpointing": 9
         }
         async with httpx.AsyncClient(timeout=20) as http:
             response = await http.post(
