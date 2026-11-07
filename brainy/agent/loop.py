@@ -47,7 +47,7 @@ class WebAgent:
         unchanged_count = 0
         step = "navigate"
         budget_steps, budget_start, nudged_at = 0, time.monotonic(), None
-        answered, facts, recent = {}, [], []
+        facts, recent = [], []
         try:
             await self.browser.start_run()
             if start_url:
@@ -99,13 +99,9 @@ class WebAgent:
                 elif question is None and nudged_at is not None and budget_steps - nudged_at > self.wrap_up_grace:
                     question = OUT_OF_BUDGET
                 if question is not None:
-                    norm = " ".join(question.casefold().split())
-                    if norm in answered:
-                        answer = answered[norm]
-                    else:
-                        yield NeedsUser(question, after_budget=nudged_at is not None)
-                        step = "user answer"
-                        answer = await self.ask(question)
+                    yield NeedsUser(question, after_budget=nudged_at is not None)
+                    step = "user answer"
+                    answer = await self.ask(question)
                     if answer.strip().casefold() in {"stop", "non", "no"}:
                         yield Done("Stopped at your request.")
                         return
@@ -114,7 +110,6 @@ class WebAgent:
                     else:
                         history.append("User answered: " + answer)
                         if action.action in {"ask_user", "done"}:
-                            answered[norm] = answer
                             facts.append(f"{question} -> {answer}")
                     last_key = None
                     unchanged_count = 0
