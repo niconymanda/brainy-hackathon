@@ -4,10 +4,6 @@ H_PROMPT_TEMPLATE = """The user wants to perform a task. Here is the summary of 
 
 {summary}
 
-Here is what they said, word for word:
-
-{transcript}
-
 Perform this task to complete it.
 
 Rules:
