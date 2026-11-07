@@ -5,7 +5,8 @@
 ## Fichiers fournis par Hugo
 
 - `assets/mascot-poster.png` : visuel fixe du personnage (1122×1402, portrait 4:5).
-- `assets/mascot-apparition.mp4` : animation d'apparition (H.264, 1122×1402, 30 fps, 4,5 s, sans son).
+- `assets/mascot-apparition.mp4` : animation d'apparition (H.264, 1122×1402, 30 fps, 4,5 s, sans son), fond crème opaque.
+- `assets/mascot-apparition-alpha.webm` : même animation, fond transparent (VP9 + alpha, 1122×1402, 30 fps, 4,5 s). Le canal alpha est bien présent, mais le détourage a aplati le halo et l'anneau doré en aplat orange opaque : bon rendu sur fond clair, beaucoup moins sur fond sombre.
 
 ## Le personnage
 
@@ -26,7 +27,8 @@
 
 ## Questions ouvertes
 
-- Raccourci : les yeux « tab » + « H », ça veut dire que le raccourci est **Tab + H** ?
-- Le fond de la vidéo est crème et opaque. Pour faire apparaître le perso par-dessus une page, il faut une version à fond transparent (WebM avec alpha, séquence PNG ou Lottie), ou alors une interface entièrement sur fond crème.
+- ~~Raccourci Tab + H ?~~ Non : la touche « ● H » est un clin d'œil au logo H Company. Raccourci envisagé : la touche **H** (à confirmer).
+- ~~Fond transparent ?~~ Reçu en WebM alpha (voir limites ci-dessus). Le PNG détouré reste à recevoir.
+- WebM alpha : ne marche pas dans Safari (il faudrait une version HEVC alpha si on veut Safari). Chrome et Firefox, c'est OK.
 - Autres états (écoute, réflexion, parle, demande de confirmation, disparition) : il y a des animations prévues, ou je les crée en code à partir du visuel fixe ?
 - Après l'apparition, la vidéo doit-elle boucler sur la partie « flottement » ?
