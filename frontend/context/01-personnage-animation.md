@@ -9,6 +9,8 @@
 - `assets/mascot-apparition-alpha.webm` : même animation, fond transparent (VP9 + alpha, 1122×1402, 30 fps, 4,5 s). Le canal alpha est bien présent, mais le détourage a aplati le halo et l'anneau doré en aplat orange opaque : bon rendu sur fond clair, beaucoup moins sur fond sombre.
 - `assets/mascot-apparition-alpha-devin.webm` : détourage refait par Devin à partir du MP4 crème (retrait mathématique du fond crème, script `scripts/matte-mascot.py`). Rendu quasi identique à l'original sur fond blanc/clair, lueurs semi-transparentes conservées. Sur fond sombre, l'anneau doré devient terne : à utiliser sur fonds clairs uniquement.
 
+**Animation retenue (validée par Hugo) : `assets/mascot-apparition-alpha-devin.webm`.**
+
 ## Le personnage
 
 - Boule bleue texturée (bleu roi, aspect un peu usé et granuleux).
