@@ -3,6 +3,7 @@ import os
 import re
 import sys
 import time
+from urllib.parse import urlsplit
 
 from .events import AgentError, AgentStep, ConfirmRequest, Done, NeedsUser
 from .debug import debug_log
@@ -14,6 +15,85 @@ WRAP_UP = ("Search budget used up: stop searching now. Use ask_user to propose t
            "If you are already completing a booking that matches the request, ignore this and continue.")
 OUT_OF_BUDGET = "This is taking longer than expected. Should I keep going, or stop here?"
 SECRET_QUESTION = re.compile(r"\b(?:password|mot\s+de\s+passe|card|carte|cvv|cvc|code|pin|iban|otp|sms)\b", re.I)
+FORCED_SCROLL = "Brainy scrolled down instead so that other options are visible."
+# Accessible name of the element under a click: Doctolib slot buttons only show "11:15" but are
+# labelled by their date, so this tells two "11:15" slots on different days apart.
+ELEMENT_NAME = """([x, y]) => {
+  const hit = document.elementFromPoint(x, y);
+  const el = hit && (hit.closest('button, a, [role="button"], [role="radio"], [role="option"], input, select, textarea, label') || hit);
+  if (!el || el.type === 'password') return '';
+  const clean = s => (s || '').replace(/\\s+/g, ' ').trim();
+  const ids = (el.getAttribute('aria-labelledby') || '').split(/\\s+/).filter(Boolean);
+  let name = clean([...new Set(ids)].map(id => document.getElementById(id)?.innerText || '').join(' '));
+  if (!name && /^(INPUT|SELECT|TEXTAREA)$/.test(el.tagName))
+    name = clean(el.getAttribute('aria-label') || el.placeholder || el.name || el.id);
+  if (!name) name = clean(el.getAttribute('aria-label') || el.innerText || el.value || el.title);
+  const card = el.closest('article, li, [class*="card"], [class*="Card"]');
+  const head = card && card !== el ? clean(card.querySelector('h1, h2, h3, h4')?.innerText) : '';
+  return (head && !name.includes(head) ? name + ' | ' + head : name).slice(0, 160);
+}"""
+
+
+def _url_key(url):
+    parts = urlsplit(url or "")
+    return parts._replace(fragment="", path=parts.path.rstrip("/") or "/").geturl()
+
+
+def _short(url):
+    parts = urlsplit(url)
+    return (parts.path + ("?" + parts.query if parts.query else ""))[:100]
+
+
+def _fold(text):
+    return " ".join(str(text).casefold().split())
+
+
+class TaskMemory:
+    """What this task already did: pages visited, navigations, and the outcome of each click per page."""
+
+    def __init__(self):
+        self.visited = []
+        self.navigations = {}
+        self.aliases = {}
+        self.clicks = {}
+        self.labels = {}
+        self.order = []
+
+    def visit(self, url):
+        if url not in self.visited:
+            self.visited.append(url)
+
+    def same_page(self, url, target):
+        return target in {url, self.aliases.get(url)}
+
+    def record(self, element, label, outcome):
+        self.clicks.setdefault(element, []).append(outcome)
+        self.labels[element] = label
+        if element in self.order:
+            self.order.remove(element)
+        self.order.append(element)
+
+    def no_effect_count(self, element):
+        return sum(o[0] == "none" for o in self.clicks.get(element, []))
+
+    def led_to(self, element):
+        return next((o[1] for o in reversed(self.clicks.get(element, [])) if o[0] == "moved"), None)
+
+    def prompt(self, url):
+        lines = []
+        for element in sorted(self.order[-12:], key=lambda e: e[0] != url):
+            page, _ = element
+            outcome = self.clicks[element][-1]
+            result = {"moved": lambda: "opened " + _short(outcome[1]), "none": lambda: "had no effect",
+                      "changed": lambda: "updated the page"}[outcome[0]]()
+            where = "this page" if page == url else _short(page)
+            lines.append(f"on {where}: clicked '{self.labels[element][:80]}' -> {result}")
+        if len(self.visited) > 1:
+            lines.append("pages already visited: " + ", ".join(_short(u) for u in self.visited[-6:]))
+        if not lines:
+            return ""
+        return ("\nAlready tried in this task (do not repeat a click that led somewhere you came back from or "
+                "had no effect; choose another element, slot or option):\n- " + "\n- ".join(lines))
 
 
 class Laps:
@@ -54,15 +134,23 @@ class WebAgent:
         return action.action == "confirm" or (
             action.action == "click" and RISKY.search(action.target + " " + action.narration))
 
-    async def _label_is_risky(self, action, x, y):
+    @staticmethod
+    def _label_is_risky(action, label):
         """Gate on the text of the element under the click: "Continuer" is not risky, "Confirmer le RDV" is.
         The model's target description ("Continuer to confirm the time") is only a fallback."""
+        return bool(RISKY.search(label or action.target))
+
+    async def _element(self, x, y):
+        """(visible label, accessible name) of the element under the click; empty strings when unknown."""
         try:
             label = await self.browser.label_at(x, y)
         except Exception:
             label = ""
-        label = label.strip() if isinstance(label, str) else ""
-        return bool(RISKY.search(label or action.target))
+        try:
+            name = await (await self.browser.ensure_page()).evaluate(ELEMENT_NAME, [x, y])
+        except Exception:
+            name = ""
+        return (label.strip() if isinstance(label, str) else "", name.strip() if isinstance(name, str) else "")
 
     def _over_budget(self, steps, started):
         return ((self.wrap_up_steps is not None and steps >= self.wrap_up_steps) or
@@ -70,17 +158,25 @@ class WebAgent:
 
     async def run(self, goal, start_url=None):
         history = []
+        memory = TaskMemory()
         pending = None
-        last_key = None
-        unchanged_count = 0
+        blocks = {}
         step = "navigate"
         budget_steps, budget_start, nudged_at = 0, time.monotonic(), None
         facts, recent = [], []
         lap = Laps()
+
+        def block(reason, note):
+            """Refuse a repeated action. The second refusal in a row also scrolls, so the model sees other options."""
+            blocks[reason] = blocks.get(reason, 0) + 1
+            history.append("BLOCKED, not executed: " + note)
+            return blocks[reason] >= 2
+
         try:
             await self.browser.start_run()
             if start_url:
                 await self.browser.goto(start_url)
+                pending = ("navigate", _url_key(start_url), "", None, None)
             for _ in range(self.max_steps):
                 lap("between steps")
                 if self.prefill:
@@ -96,29 +192,40 @@ class WebAgent:
                 step = "page context"
                 page_context = await self.browser.page_context()
                 lap("page context")
-                signature = (page_context["url"], hashlib.sha256(screenshot).digest())
+                url = _url_key(page_context["url"])
+                # Screenshots differ after almost any click (hover, focus ring); URL and page text tell real effects.
+                text_hash = hashlib.sha256(str(page_context.get("text", "")).encode()).digest()
+                memory.visit(url)
                 history.extend(await self.browser.take_recovery_notes())
                 if pending:
-                    key, before, target = pending
-                    if before == signature:
-                        unchanged_count = unchanged_count + 1 if key == last_key else 1
-                    else:
-                        unchanged_count = 0
-                    last_key = key
+                    kind, element, label, before_url, before_hash = pending
                     pending = None
-                    if unchanged_count >= 2:
-                        history.append(f"Your last {key[0]} on '{target}' had no visible effect; do not repeat it, "
-                                       "try a different approach (e.g. results may already be shown, scroll, "
-                                       "choose a suggestion first, or ask the user).")
+                    if kind == "navigate":
+                        if url != element:
+                            memory.aliases[url] = element
+                    elif url != before_url:
+                        memory.record(element, label, ("moved", url))
+                    elif text_hash == before_hash:
+                        memory.record(element, label, ("none",))
+                        if memory.no_effect_count(element) >= 2:
+                            history.append(f"Your last click on '{label}' had no visible effect; do not repeat it, "
+                                           "try a different approach (e.g. results may already be shown, scroll, "
+                                           "choose a suggestion first, or ask the user).")
+                        else:
+                            history.append(f"After your click on '{label}' neither the URL nor the page text changed: "
+                                           "check the screenshot; if nothing was selected or opened, it had no effect.")
+                    else:
+                        memory.record(element, label, ("changed",))
                 if nudged_at is None and self._over_budget(budget_steps, budget_start):
                     history.append(WRAP_UP)
                     nudged_at = budget_steps
                 budget_steps += 1
                 step = "model call"
                 known = ("\nThe user already answered (settled, never ask again):\n- " + "\n- ".join(facts)) if facts else ""
-                action = await self.client.decide(screenshot, goal + known, history, page_context=page_context)
+                action = await self.client.decide(screenshot, goal + known + memory.prompt(url), history,
+                                                  page_context=page_context)
                 lap(f"decide ({action.action})")
-                key = (action.action, " ".join(action.target.casefold().split()))
+                key = (action.action, _fold(action.target))
                 recent = (recent + [key])[-6:]
                 if action.action in {"click", "type"} and recent.count(key) >= 3:
                     history.append(f"You already tried {action.action} on '{action.target}' {recent.count(key)} times "
@@ -131,13 +238,40 @@ class WebAgent:
                         yield Done(result)
                         return
                     question = result
-                if key == last_key and unchanged_count >= 2:
-                    question = (f"I'm stuck: repeating '{action.target}' has no visible effect. "
-                                "Should I try a different approach, or can you do it manually and reply ok?")
-                elif action.action == "ask_user":
+                if action.action == "ask_user":
                     question = action.text or action.narration
                 elif question is None and nudged_at is not None and budget_steps - nudged_at > self.wrap_up_grace:
                     question = OUT_OF_BUDGET
+                stuck = None
+                if action.action in {"click", "confirm"} and question is None:
+                    step = "model call"
+                    x, y = await self.client.locate(screenshot, action.target, self.browser.viewport)
+                    lap("locate")
+                    label, name = await self._element(x, y)
+                    element = (url, _fold(name or label or action.target))
+                    shown = name or label or action.target
+                    led_to = memory.led_to(element)
+                    if memory.no_effect_count(element) >= 2:
+                        if blocks.get(("none", element), 0) >= 2:
+                            stuck = shown
+                            question = (f"I'm stuck: repeating '{action.target}' has no visible effect. "
+                                        "Should I try a different approach, or can you do it manually and reply ok?")
+                        else:
+                            if block(("none", element), f"'{shown}' was already clicked twice on this page with no "
+                                     "effect (it may be disabled or need another field first). Do something else."):
+                                await self.browser.scroll("down")
+                                history.append(FORCED_SCROLL)
+                            continue
+                    elif led_to and not memory.same_page(led_to, url):
+                        if blocks.get(("moved", element), 0) < 2:
+                            if block(("moved", element), f"'{shown}' was already clicked on this page earlier in "
+                                     f"this task: it opened {_short(led_to)} and you came back. Clicking it again "
+                                     "repeats the same path. Choose a different slot, practitioner or option, or "
+                                     "fix the choice on the next page instead of coming back."):
+                                await self.browser.scroll("down")
+                                history.append(FORCED_SCROLL)
+                            continue
+                        blocks.pop(("moved", element))
                 if question is not None:
                     yield NeedsUser(question, after_budget=nudged_at is not None)
                     step = "user answer"
@@ -151,8 +285,9 @@ class WebAgent:
                         history.append("User answered: " + answer)
                         if action.action in {"ask_user", "done"}:
                             facts.append(f"{question} -> {answer}")
-                    last_key = None
-                    unchanged_count = 0
+                    if stuck is not None:
+                        blocks.pop(("none", element), None)
+                        memory.clicks.pop(element, None)
                     budget_steps, budget_start, nudged_at = 0, time.monotonic(), None
                     continue
                 if self._needs_confirmation(action):
@@ -165,15 +300,27 @@ class WebAgent:
                         return
                     budget_steps, budget_start, nudged_at = 0, time.monotonic(), None
                 if action.action == "navigate":
+                    target = _url_key(action.url)
+                    if memory.same_page(url, target):
+                        history.append(f"BLOCKED, not executed: you are already on {_short(target)}; reloading it "
+                                       "changes nothing. Use what is shown: scroll, or click a result.")
+                        continue
+                    if memory.navigations.get(target, 0) >= 1:
+                        if blocks.get(("navigate", target), 0) < 2:
+                            if block(("navigate", target), f"you already went to {_short(target)} earlier in this "
+                                     "task; going back there repeats work already done. Continue from the current "
+                                     "page."):
+                                await self.browser.scroll("down")
+                                history.append(FORCED_SCROLL)
+                            continue
+                        blocks.pop(("navigate", target))
                     step = "navigate"
+                    memory.navigations[target] = memory.navigations.get(target, 0) + 1
                     await self.browser.goto(action.url)
                     lap("navigate")
-                elif action.action in {"click", "confirm", "type"}:
-                    step = "model call"
-                    x, y = await self.client.locate(screenshot, action.target, self.browser.viewport)
-                    lap("locate")
-                    if (not self.gate_narration and action.action == "click"
-                            and await self._label_is_risky(action, x, y)):
+                    pending = ("navigate", target, "", url, text_hash)
+                elif action.action in {"click", "confirm"}:
+                    if not self.gate_narration and action.action == "click" and self._label_is_risky(action, label):
                         summary = action.narration or action.target
                         yield ConfirmRequest(summary)
                         step = "confirmation"
@@ -184,30 +331,36 @@ class WebAgent:
                     step = "click"
                     await self.browser.click(x, y)
                     lap("click")
-                    if action.action == "type":
+                    pending = ("click", element, shown, url, text_hash)
+                elif action.action == "type":
+                    step = "model call"
+                    x, y = await self.client.locate(screenshot, action.target, self.browser.viewport)
+                    lap("locate")
+                    step = "click"
+                    await self.browser.click(x, y)
+                    lap("click")
+                    step = "type"
+                    value = await self.browser.type(action.text)
+                    if value is None:
+                        history.append("Typing click missed the field: focused element is not editable; no text entered.")
+                        step = "screenshot"
+                        screenshot = await self.browser.screenshot()
+                        step = "model call"
+                        x, y = await self.client.locate(screenshot, action.target, self.browser.viewport)
+                        step = "click"
+                        await self.browser.click(x, y)
                         step = "type"
                         value = await self.browser.type(action.text)
-                        if value is None:
-                            history.append("Typing click missed the field: focused element is not editable; no text entered.")
-                            step = "screenshot"
-                            screenshot = await self.browser.screenshot()
-                            step = "model call"
-                            x, y = await self.client.locate(screenshot, action.target, self.browser.viewport)
-                            step = "click"
-                            await self.browser.click(x, y)
-                            step = "type"
-                            value = await self.browser.type(action.text)
-                        if value is None:
-                            history.append("Typing retry missed the field; no text entered. Re-locate the editable field.")
-                            continue
-                        history.append(("Field now contains " + repr(value) if value else "Field empty") +
-                                       ". If a suggestion list appeared, click the matching suggestion before searching.")
+                    if value is None:
+                        history.append("Typing retry missed the field; no text entered. Re-locate the editable field.")
+                        continue
+                    history.append(("Field now contains " + repr(value) if value else "Field empty") +
+                                   ". If a suggestion list appeared, click the matching suggestion before searching.")
                 elif action.action == "scroll":
                     step = "scroll"
                     await self.browser.scroll(action.text)
                 history.append({"action": action.action, "target": action.target,
                                 "result": "executed; inspect current screenshot to verify"})
-                pending = (key, signature, action.target)
             yield AgentError("The step limit was reached.", "Try a smaller task or continue manually.")
         except Exception as exc:
             if self.debug:

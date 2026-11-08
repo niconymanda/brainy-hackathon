@@ -201,19 +201,23 @@ class AgentTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.browser.click.await_count, 2)
         self.assertIsInstance(events[-1], Done)
 
-    async def test_third_unchanged_attempt_asks_without_clicking(self):
+    async def test_third_unchanged_attempt_is_blocked_then_scrolls_then_asks(self):
         self.ask.return_value = "try scrolling"
-        events = await self.collect([Action("click", target="Rechercher")] * 3 + [Action("done")])
+        events = await self.collect([Action("click", target="Rechercher")] * 5 + [Action("done")], max_steps=7)
         self.assertEqual(self.browser.click.await_count, 2)
-        self.assertTrue(any(isinstance(e, NeedsUser) for e in events))
-        self.assertIn("User answered: try scrolling", self.client.decide.call_args.args[2])
+        history = self.client.decide.call_args.args[2]
+        self.assertIn("BLOCKED, not executed: 'Rechercher' was already clicked twice", str(history))
+        self.browser.scroll.assert_awaited_once_with("down")
+        self.assertEqual(sum(isinstance(e, NeedsUser) for e in events), 1)
+        self.assertIn("User answered: try scrolling", history)
+        self.assertEqual(self.client.locate.await_count, 5)
 
     async def test_repeat_question_keeps_stop_and_secret_rules(self):
         for target, answer in (("Rechercher", "non"), ("Show PIN", "sensitive answer")):
             with self.subTest(target=target):
                 self.setUp()
                 self.ask.return_value = answer
-                events = await self.collect([Action("click", target=target)] * 3 + [Action("done")])
+                events = await self.collect([Action("click", target=target)] * 5 + [Action("done")], max_steps=7)
                 self.assertEqual(self.browser.click.await_count, 2)
                 self.assertNotIn("sensitive answer", str(self.client.decide.call_args.args[2]))
                 if answer == "non":
@@ -222,17 +226,126 @@ class AgentTests(unittest.IsolatedAsyncioTestCase):
                     self.assertIn("User has completed the requested manual step", str(self.client.decide.call_args.args[2]))
 
     async def test_page_change_allows_repeated_actions(self):
-        for change in ("url", "screenshot"):
+        for change in ("url", "text"):
             with self.subTest(change=change):
                 self.setUp()
-                if change == "url":
-                    self.browser.page_context.side_effect = [
-                        {"url": str(i), "title": "Results", "text": "Results"} for i in range(4)]
-                else:
-                    self.browser.screenshot.side_effect = [b"one", b"two", b"three", b"four"]
+                self.browser.page_context.side_effect = [
+                    {"url": f"https://example.org/{i if change == 'url' else 0}", "title": "Results",
+                     "text": f"Results {i if change == 'text' else 0}"} for i in range(4)]
                 await self.collect([Action("click", target="Next")] * 3 + [Action("done")])
                 self.assertEqual(self.browser.click.await_count, 3)
                 self.ask.assert_not_awaited()
+
+    async def test_screenshot_noise_is_not_an_effect(self):
+        self.browser.screenshot.side_effect = [b"one", b"two", b"three", b"four"]
+        await self.collect([Action("click", target="Afficher plus")] * 3 + [Action("done")])
+        self.assertEqual(self.browser.click.await_count, 2)
+        self.assertIn("BLOCKED", str(self.client.decide.call_args.args[2]))
+
+    def site(self, links, start):
+        """Fake site: clicking a label follows links[url][label] (None: no effect); locate returns the label's index."""
+        labels = sorted({label for page in links.values() for label in page})
+        state = {"url": start}
+        self.browser.page_context.side_effect = lambda: {"url": state["url"], "title": "", "text": state["url"]}
+        self.client.locate.side_effect = lambda shot, target, viewport: (labels.index(target), 0)
+        self.browser.label_at.side_effect = lambda x, y: labels[int(x)]
+        clicked = []
+
+        async def click(x, y):
+            clicked.append(labels[int(x)])
+            state["url"] = links[state["url"]].get(labels[int(x)]) or state["url"]
+
+        async def goto(url):
+            state["url"] = links.get("redirects", {}).get(url, url)
+        self.browser.click.side_effect = click
+        self.browser.goto.side_effect = goto
+        return clicked
+
+    async def run_site(self, actions, start=None):
+        goals, histories = [], []
+        queue = list(actions)
+
+        async def decide(screenshot, goal, history, page_context=None):
+            goals.append(goal)
+            histories.append(list(history))
+            return queue.pop(0)
+        self.client.decide.side_effect = decide
+        agent = WebAgent(self.client, self.browser, self.ask, max_steps=len(actions))
+        events = [e async for e in agent.run("test", start)]
+        return events, goals, histories
+
+    RESULTS, BOOKING = "https://d.fr/dermatologue/paris-75009", "https://d.fr/booking?slot=tue"
+
+    async def test_click_that_led_away_is_blocked_after_coming_back(self):
+        clicked = self.site({self.RESULTS: {"11:15": self.BOOKING, "11:30": self.BOOKING + "2"},
+                             self.BOOKING: {"Étape précédente": self.RESULTS}, self.BOOKING + "2": {}}, self.RESULTS)
+        slot, back = Action("click", target="11:15"), Action("click", target="Étape précédente")
+        events, goals, histories = await self.run_site(
+            [slot, back, slot, Action("click", target="11:30"), Action("done", text="ok")])
+        self.assertEqual(clicked, ["11:15", "Étape précédente", "11:30"])
+        self.assertIn("BLOCKED, not executed: '11:15' was already clicked on this page earlier in this task: it "
+                      "opened /booking?slot=tue and you came back", str(histories[3]))
+        self.assertIn("on this page: clicked '11:15' -> opened /booking?slot=tue", goals[2])
+        self.assertIn("pages already visited: /dermatologue/paris-75009, /booking?slot=tue", goals[2])
+        self.assertLessEqual(self.client.locate.await_count + self.client.decide.await_count, 2 * 5)
+        self.assertEqual(events[-1], Done("ok"))
+
+    async def test_cycle_block_scrolls_then_relents_when_insisting(self):
+        clicked = self.site({self.RESULTS: {"11:15": self.BOOKING},
+                             self.BOOKING: {"Étape précédente": self.RESULTS}}, self.RESULTS)
+        slot, back = Action("click", target="11:15"), Action("click", target="Étape précédente")
+        await self.run_site([slot, back, slot, slot, slot, back, Action("done")])
+        self.assertEqual(clicked, ["11:15", "Étape précédente", "11:15"])
+        self.browser.scroll.assert_awaited_once_with("down")
+
+    async def test_cycle_detection_follows_accessible_name_not_visible_text(self):
+        clicked = self.site({self.RESULTS: {"11:15": self.BOOKING},
+                             self.BOOKING: {"Étape précédente": self.RESULTS}}, self.RESULTS)
+        page = MagicMock()
+        page.evaluate = AsyncMock(side_effect=["11:15 mardi | Dr A", "Étape précédente", "11:15 lundi | Dr B"])
+        self.browser.ensure_page.return_value = page
+        slot, back = Action("click", target="11:15"), Action("click", target="Étape précédente")
+        events, goals, histories = await self.run_site([slot, back, slot, Action("done")])
+        self.assertEqual(clicked, ["11:15", "Étape précédente", "11:15"])
+        self.assertIn("clicked '11:15 mardi | Dr A' -> opened /booking?slot=tue", goals[2])
+
+    async def test_navigate_to_current_page_is_blocked(self):
+        search = "https://d.fr/search?keyword=dermatologue&location=paris-75009"
+        self.site({search: {}, "redirects": {self.RESULTS: search}}, None)
+        events, goals, histories = await self.run_site(
+            [Action("navigate", url=self.RESULTS), Action("navigate", url=self.RESULTS + "/"),
+             Action("navigate", url=search + "#top"), Action("done")], start=self.RESULTS)
+        self.assertEqual(self.browser.goto.await_count, 1)
+        self.assertEqual(str(histories[1]).count("BLOCKED, not executed: you are already on"), 1)
+        self.assertEqual(str(histories[3]).count("BLOCKED, not executed: you are already on"), 3)
+
+    async def test_navigate_back_to_a_visited_page_is_allowed_once(self):
+        other, third = "https://d.fr/dermatologue/paris", "https://d.fr/dermatologue/paris-75010"
+        self.site({self.RESULTS: {"Autre soignant": other}, other: {}, third: {}}, self.RESULTS)
+        home = Action("navigate", url=self.RESULTS)
+        events, goals, histories = await self.run_site(
+            [Action("click", target="Autre soignant"), home, Action("navigate", url=third), home, home, home,
+             Action("done")], start=self.RESULTS)
+        self.assertEqual([c.args[0] for c in self.browser.goto.await_args_list],
+                         [self.RESULTS, self.RESULTS, third, self.RESULTS])
+        self.assertIn("you already went to /dermatologue/paris-75009 earlier", str(histories[4]))
+        self.browser.scroll.assert_awaited_once_with("down")
+
+    async def test_no_effect_note_then_block_counts_rewordings(self):
+        clicked = self.site({self.RESULTS: {"Rechercher": None}}, self.RESULTS)
+        page = MagicMock()
+        page.evaluate = AsyncMock(return_value="Rechercher")
+        self.browser.ensure_page.return_value = page
+        self.client.locate.side_effect = None
+        self.client.locate.return_value = (0, 0)
+        events, goals, histories = await self.run_site(
+            [Action("click", target="Rechercher"), Action("click", target="Bouton Rechercher bleu"),
+             Action("click", target="Search button"), Action("done")])
+        self.assertEqual(clicked, ["Rechercher", "Rechercher"])
+        self.assertIn("neither the URL nor the page text changed", str(histories[1]))
+        self.assertIn("had no visible effect; do not repeat it", str(histories[2]))
+        self.assertIn("on this page: clicked 'Rechercher' -> had no effect", goals[2])
+        self.assertIn("BLOCKED", str(histories[3]))
 
     async def test_page_context_forwarded_to_decide(self):
         await self.collect([Action("done")])

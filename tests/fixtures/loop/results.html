@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="fr"><head><meta charset="utf-8"><title>Dermatologue Paris 9e</title>
+<style>body{font-family:sans-serif;margin:20px} article{border:1px solid #ccc;padding:10px;margin:10px 0;width:600px}
+.day{display:inline-block;width:140px;vertical-align:top} button{display:block;margin:4px 0;width:120px;height:32px}</style></head>
+<body>
+<form onsubmit="event.preventDefault(); location.reload()">
+  <input placeholder="Nom, spécialité, établissement" value="Dermatologue">
+  <button id="search" type="submit">Rechercher</button>
+</form>
+<h1>12 résultats</h1>
+<article>
+  <h2>Dr Alice Martin</h2>
+  <div class="day"><div id="date-a-mon">lundi 9 novembre</div><span>Aucune disponibilité</span></div>
+  <div class="day"><div id="date-a-tue">mardi 10 novembre</div>
+    <button id="slot-a-tue" aria-labelledby="slot-a-tue date-a-tue" onclick="location.href='booking.html?slot=2026-11-10T11:15&pid=a'">11:15</button></div>
+</article>
+<article>
+  <h2>Dr Bruno Petit</h2>
+  <div class="day"><div id="date-b-mon">lundi 9 novembre</div>
+    <button id="slot-b-mon" aria-labelledby="slot-b-mon date-b-mon" onclick="location.href='booking.html?slot=2026-11-09T11:15&pid=b'">11:15</button></div>
+</article>
+</body></html>
