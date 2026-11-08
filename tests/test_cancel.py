@@ -77,3 +77,31 @@ class CancelTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(result[0])
         self.assertIn('vérifier', result[1])
         self.assertTrue(await self.page.locator('#detail').is_visible())
+
+    async def test_replaced_marker_verifies_selected_appointment(self):
+        body = FIXTURE.replace('<main>', '<aside id="old">Rendez-vous annulé — Dr Dupont — 1 janvier 2020 à 09h00</aside><main>').replace(
+            "document.querySelector('main').innerHTML='<h1>Rendez-vous annulé</h1>';",
+            "document.querySelector('#old').remove();document.querySelector('#modal').close();"
+            "document.querySelector('#detail').innerHTML='<h2>Dr Martin</h2><p>12 décembre 2030 à 10h30</p><p>Rendez-vous annulé</p>';")
+        result = await self.route(body)
+        self.assertTrue(result[0])
+        self.assertEqual(await self.page.get_by_text('Rendez-vous annulé').count(), 1)
+        self.assertIn('Rendez-vous annulé', await self.page.locator('#detail').inner_text())
+
+    async def test_broad_main_with_old_cancelled_appointment_is_not_success(self):
+        body = FIXTURE.replace('<div id="detail" hidden>', '').replace('</div>\n<dialog', '\n<dialog').replace(
+            "document.querySelector('#detail').hidden=false", 'void 0').replace(
+            '<main>', '<main><article>Rendez-vous annulé — Dr Dupont — 1 janvier 2020 à 09h00</article>').replace(
+            "document.querySelector('main').innerHTML='<h1>Rendez-vous annulé</h1>';",
+            "document.querySelector('#modal').close();")
+        result = await self.route(body)
+        self.assertFalse(result[0])
+        self.assertIn('vérifier', result[1])
+
+    async def test_old_cancelled_appointment_moved_into_detail_is_not_success(self):
+        body = FIXTURE.replace('<main>', '<aside id="old">Rendez-vous annulé — Dr Dupont — 1 janvier 2020 à 09h00</aside><main>').replace(
+            "document.querySelector('main').innerHTML='<h1>Rendez-vous annulé</h1>';",
+            "document.querySelector('#modal').close();document.querySelector('#detail').append(document.querySelector('#old'));")
+        result = await self.route(body)
+        self.assertFalse(result[0])
+        self.assertIn('vérifier', result[1])
