@@ -29,6 +29,7 @@ from brainy.agent.forms import DoctolibPrefill, profile_fields
 from brainy.agent.events import AgentError, AgentStep, ConfirmRequest, Done, NeedsUser
 from brainy.agent.holo import HoloClient
 from brainy.agent.route import CHALLENGE_BLOCKED, LOGIN_REQUIRED, book_doctolib, doctolib_url, has_specialty
+from brainy.agent.cancel import cancel_doctolib
 from brainy.agent.loop import OUT_OF_BUDGET, SECRET_QUESTION, WebAgent
 
 DIST = Path(__file__).resolve().parents[1] / "frontend" / "dist"
@@ -462,6 +463,17 @@ class Session:
         title = request if len(request) <= 48 else request[:47].rstrip() + "…"
         status, tone = "Arrêté", "wait"
         try:
+            if re.search(r"annule|annuler", request, re.I) and re.search(r"rendez-vous|rdv", request, re.I):
+                browser = await self.app.get_browser()
+                cancelled = await cancel_doctolib(await browser.ensure_page(), self._say, self._confirm)
+                if cancelled is not None:
+                    ok, result = cancelled
+                    if ok:
+                        status, tone = "Terminé", "paid"
+                else:
+                    ok, result = False, "Je n'ai pas trouvé l'annulation sur Doctolib. Vérifie que ton compte est connecté."
+                self.emit(type="done", result=result, ok=ok)
+                return
             route = doctolib_url(request) if not os.getenv("BRAINY_NO_ROUTE") else None
             medical_booking = bool(re.search(
                 r"\b(?:rdv|rendez[\s-]?vous|doctolib|m[ée]decin|docteur)\b", request, re.I))
