@@ -11,7 +11,7 @@ Many websites still don't work with screen readers. Captchas, date pickers, seat
 ## Lancer l'appli Brainy (Mac / Windows)
 > *Launch the Brainy desktop app (macOS / Windows)*
 
-Prérequis : Python 3.10+ (`brew install python@3.12`), Node 18+, Google Chrome. Créer `.env` à la racine avec `GLADIA_API_KEY` et `H_API_KEY`.
+Prérequis : Python 3.10+ (`brew install python@3.12`), Node 18+, Google Chrome. Créer `.env` à la racine avec `GLADIA_API_KEY`, `H_API_KEY` et `ELEVENLABS_API_KEY` (voix ElevenLabs ; optionnels : `ELEVENLABS_VOICE_ID`, `ELEVENLABS_MODEL`).
 
 ```sh
 ./Brainy.command            # 1er lancement : installe tout, puis ouvre la fenêtre Brainy

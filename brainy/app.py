@@ -15,6 +15,7 @@ import sys
 import threading
 import time
 from datetime import datetime
+from urllib.parse import parse_qs, urlsplit
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -28,6 +29,7 @@ from brainy.agent.events import AgentError, AgentStep, ConfirmRequest, Done, Nee
 from brainy.agent.holo import HoloClient
 from brainy.agent.loop import OUT_OF_BUDGET, SECRET_QUESTION, WebAgent
 from brainy.h_task import build_h_prompt
+from brainy.tts import synthesize
 
 DIST = Path(__file__).resolve().parents[1] / "frontend" / "dist"
 HOME = Path(os.getenv("BRAINY_HOME", Path.home() / ".brainy"))
@@ -345,6 +347,19 @@ def static_response(path):
     return Response(200, "OK", headers, body)
 
 
+async def tts_response(path):
+    text = parse_qs(urlsplit(path).query).get("text", [""])[0].strip()
+    if not text:
+        return Response(400, "Bad Request", Headers([("Content-Type", "text/plain")]), b"missing text")
+    try:
+        body = await synthesize(text)
+    except Exception as exc:
+        print(f"ElevenLabs TTS failed: {type(exc).__name__}", file=sys.stderr)
+        return Response(502, "Bad Gateway", Headers([("Content-Type", "text/plain")]), b"tts failed")
+    headers = Headers([("Content-Type", "audio/mpeg"), ("Content-Length", str(len(body))), ("Cache-Control", "no-store")])
+    return Response(200, "OK", headers, body)
+
+
 async def login(args):
     """Open the agent's browser profile so the user can sign in once; cookies persist for later runs."""
     app = BrainyApp(args)
@@ -376,9 +391,12 @@ async def serve_app(args, ready):
     if getattr(args, "hotkey", ""):
         start_hotkey(args.hotkey, asyncio.get_running_loop(), app)
 
-    def process_request(connection, request):
-        if request.path.split("?", 1)[0] == "/ws":
+    async def process_request(connection, request):
+        route = request.path.split("?", 1)[0]
+        if route == "/ws":
             return None
+        if route == "/tts":
+            return await tts_response(request.path)
         return static_response(request.path)
 
     async def handler(ws):
