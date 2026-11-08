@@ -1,5 +1,7 @@
 """Fill known forms straight from the user's profile: faster and more reliable than clicking field by field."""
 import re
+import sys
+from pathlib import Path
 
 ADDRESS = re.compile(r"^(.*?)[,\s]+(\d{5})\s+(.+)$")
 
@@ -37,6 +39,14 @@ class DoctolibPrefill:
                 if await fill(page):
                     self.done.add(name)
                     filled.append(name)
+            except Exception as exc:
+                print(f"Prefill {name}: {type(exc).__name__}", file=sys.stderr)
+        if not self.done and not getattr(self, "dumped", False):
+            self.dumped = True
+            try:
+                # Local debugging aid: the form's markup, kept on this computer only.
+                html = await page.evaluate("() => (document.querySelector('main') || document.body).outerHTML")
+                (Path.home() / ".brainy" / "checkout.html").write_text(html, encoding="utf-8")
             except Exception:
                 pass
         if not filled:
