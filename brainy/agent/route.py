@@ -32,12 +32,23 @@ CHOICES = re.compile(
     re.I,
 )
 FIRST_VISIT = re.compile(r"premi[eè]re consultation|nouveau patient", re.I)
-UNAVAILABLE = re.compile(r"prise de rendez-vous en ligne n['’]est (?:malheureusement )?pas disponible", re.I)
+UNAVAILABLE = re.compile(
+    r"prise de rendez-vous en ligne n['’]est (?:malheureusement )?pas disponible|aucune disponibilit[ée] en ligne", re.I)
 FOLLOW_UP = re.compile(r"\bsuivi\b|d[ée]j[àa] (?:consult|patient|vu)|contr[ôo]le", re.I)
 SHORT_MONTH = re.compile(
     r"(?<!\d)(\d{1,2})(?:er)?\s+(janv|févr|fevr|mars|avr|mai|juin|juil|août|aout|sept|oct|nov|déc|dec)[a-zéû]*\.?(?!\w)", re.I)
 SHORT_MONTHS = {"janv": 1, "févr": 2, "fevr": 2, "mars": 3, "avr": 4, "mai": 5, "juin": 6, "juil": 7, "août": 8,
                 "aout": 8, "sept": 9, "oct": 10, "nov": 11, "déc": 12, "dec": 12}
+NEGATED = re.compile(r"\b(?:pas|non|sans)\s+(?:de\s+|d['’]\s*|une?\s+|en\s+|la\s+|le\s+)?(?:\w+\s+){0,1}?"
+                     r"(?:premi[eè]re consultation|nouveau patient|suivi|d[ée]j[àa] \w+|contr[ôo]le)", re.I)
+
+
+def wants_first_visit(request):
+    """First-visit motive unless a follow-up is asked; negated mentions ("pas de suivi") are ignored."""
+    request = NEGATED.sub(" ", request or "")
+    return bool(FIRST_VISIT.search(request)) or not FOLLOW_UP.search(request)
+
+
 CONFIRMED = re.compile(r"rendez-vous (est )?confirmé|réservation confirmée|votre rendez-vous a été", re.I)
 LOGIN_URL = re.compile(r"/(?:sessions/new|login|connexion|authentication)(?:/|$)", re.I)
 MONTHS = {
@@ -398,7 +409,7 @@ async def book_doctolib(page, url, say, confirm, max_steps=60, request="", on_pa
     await page.goto(url, wait_until="domcontentloaded")
     await page.wait_for_timeout(2500)
     tried, idle = set(), 0
-    first_visit = not FOLLOW_UP.search(request)
+    first_visit = wants_first_visit(request)
     constraint = parse_day_constraint(request)
     slot_started = None
     first_slot = None

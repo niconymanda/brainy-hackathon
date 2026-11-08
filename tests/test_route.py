@@ -75,3 +75,13 @@ class SlotDateTests(unittest.TestCase):
     def test_full_month_names_still_parse(self):
         metadata = {"href": "", "attributes": "", "context": "lundi 1er février"}
         self.assertEqual(_slot_date(metadata, date(2026, 11, 8)), date(2027, 2, 1))
+
+
+class VisitTypeTests(unittest.TestCase):
+    def test_negated_mentions_are_ignored(self):
+        from brainy.agent.route import wants_first_visit
+        self.assertTrue(wants_first_visit("première consultation, pas de suivi"))
+        self.assertFalse(wants_first_visit("suivi, pas une première consultation"))
+        self.assertFalse(wants_first_visit("un rendez-vous de suivi chez mon dermatologue"))
+        self.assertTrue(wants_first_visit("Je veux un dentiste dans le 11e lundi"))
+        self.assertTrue(wants_first_visit("dermatologue, pas en contrôle"))
