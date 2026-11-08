@@ -25,6 +25,7 @@ from websockets.exceptions import ConnectionClosed
 from websockets.http11 import Response
 
 from brainy.agent.browser import Browser
+from brainy.agent.forms import DoctolibPrefill, profile_fields
 from brainy.agent.events import AgentError, AgentStep, ConfirmRequest, Done, NeedsUser
 from brainy.agent.holo import HoloClient
 from brainy.agent.loop import OUT_OF_BUDGET, SECRET_QUESTION, WebAgent
@@ -138,11 +139,15 @@ def obvious_question(question, request=""):
             and not SECRET_QUESTION.search(question) and question != french_question(OUT_OF_BUDGET))
 
 
-def load_profile():
+def read_profile():
     try:
-        lines = PROFILE_FILE.read_text(encoding="utf-8", errors="replace").splitlines()
+        return PROFILE_FILE.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return ""
+
+
+def load_profile():
+    lines = read_profile().splitlines()
     facts = [line.strip() for line in lines
              if line.strip() and not line.lstrip().startswith("#") and line.split(":", 1)[-1].strip()]
     if not facts:
@@ -399,7 +404,7 @@ class Session:
             agent = WebAgent(client, browser, self.ask, max_steps=args.max_steps,
                              wrap_up_steps=getattr(args, "search_steps", None),
                              wrap_up_seconds=getattr(args, "search_seconds", None), wrap_up_grace=15,
-                             gate_narration=False)
+                             gate_narration=False, prefill=DoctolibPrefill(profile_fields(read_profile())))
             async for event in agent.run(goal, start_url_for(request)):
                 if isinstance(event, AgentStep):
                     if event.action not in {"done", "ask_user", "confirm"}:

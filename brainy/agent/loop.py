@@ -32,7 +32,8 @@ class Laps:
 
 class WebAgent:
     def __init__(self, client, browser, ask, max_steps=25, debug=False,
-                 wrap_up_steps=None, wrap_up_seconds=None, wrap_up_grace=6, gate_narration=True):
+                 wrap_up_steps=None, wrap_up_seconds=None, wrap_up_grace=6, gate_narration=True,
+                 prefill=None):
         """wrap_up_*: after this many steps/seconds without user input, tell the model to stop searching
         and propose the best option; if it still has not asked after wrap_up_grace steps, ask the user."""
         self.client = client
@@ -44,6 +45,7 @@ class WebAgent:
         self.wrap_up_seconds = wrap_up_seconds
         self.wrap_up_grace = wrap_up_grace
         self.gate_narration = gate_narration
+        self.prefill = prefill
 
     def _needs_confirmation(self, action):
         if not self.gate_narration:
@@ -81,6 +83,13 @@ class WebAgent:
                 await self.browser.goto(start_url)
             for _ in range(self.max_steps):
                 lap("between steps")
+                if self.prefill:
+                    step = "prefill"
+                    try:
+                        history.extend(await self.prefill(await self.browser.ensure_page()))
+                    except Exception:
+                        pass
+                    lap("prefill")
                 step = "screenshot"
                 screenshot = await self.browser.screenshot()
                 lap("screenshot")
