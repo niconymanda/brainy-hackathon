@@ -10,6 +10,8 @@ FINAL = re.compile(r"^(?:confirmer l['’]annulation|oui,? annuler|annuler (?:le
 CANCELLED = re.compile(r"(?:rendez-vous (?:a (?:bien )?été |est )?annulé|annulation (?:est )?confirmée)", re.I)
 UPCOMING = re.compile(r"(?:à venir|prochains rendez-vous)", re.I)
 OPEN = re.compile(r"(?:voir|détails|gérer|rendez-vous|\d{1,2}[:h]\d{2})", re.I)
+TIME = re.compile(r"\d{1,2}[:h]\d{2}", re.I)
+DATE_TIME = re.compile(r"\d{1,2}\s+[a-zéû]+\s+(?:\d{4}\s+)?(?:à\s+)?\d{1,2}[:h]\d{2}", re.I)
 
 
 def _log(message):
@@ -23,6 +25,18 @@ async def _find(scope, pattern):
             if await element.is_visible():
                 return element
     return None
+
+
+async def _is_selected_detail(container, date_time, practitioner):
+    if not container or not date_time or not practitioner or not await container.evaluate('el => el.isConnected'):
+        return False
+    text = await container.inner_text()
+    if date_time not in text or practitioner not in text or len(TIME.findall(text)) != 1:
+        return False
+    for card in await container.query_selector_all('article, [role=listitem], li'):
+        if TIME.search(await card.inner_text()):
+            return False
+    return True
 
 
 async def cancel_doctolib(page, say, confirm):
@@ -57,6 +71,11 @@ async def cancel_doctolib(page, say, confirm):
         if opener is None:
             _log("No upcoming appointment control found")
             return None
+        selected_label = (await opener.inner_text()).strip()
+        selected_date = DATE_TIME.search(selected_label)
+        selected_date = selected_date.group(0) if selected_date else None
+        selected_practitioner = re.split(r"\s+[—–]\s+", selected_label)
+        selected_practitioner = selected_practitioner[-1].strip() if len(selected_practitioner) > 1 else None
         await opener.click(timeout=3000)
         _log("Opened first upcoming appointment")
         cancel = await _find(page, CANCEL)
@@ -69,6 +88,7 @@ async def cancel_doctolib(page, say, confirm):
             }
             return null;
         }""")).as_element()
+        detail_is_selected = await _is_selected_detail(selected_detail, selected_date, selected_practitioner)
         detail_was_cancelled = bool(selected_detail and CANCELLED.search(await selected_detail.inner_text()))
         detail = page.locator("main").first
         summary = (await (detail if await detail.count() else page.locator("body")).inner_text()).strip()
@@ -109,7 +129,7 @@ async def cancel_doctolib(page, say, confirm):
             current_cancelled = sum([await marker.is_visible() for marker in await cancelled_markers.all()])
             if current_cancelled > previous_cancelled:
                 break
-            if selected_detail and not detail_was_cancelled and await selected_detail.evaluate('el => el.isConnected'):
+            if detail_is_selected and not detail_was_cancelled and await _is_selected_detail(selected_detail, selected_date, selected_practitioner):
                 if CANCELLED.search(await selected_detail.inner_text()):
                     _log("Selected appointment detail now shows cancellation")
                     break
