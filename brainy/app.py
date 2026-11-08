@@ -28,7 +28,7 @@ from brainy.agent.browser import Browser
 from brainy.agent.forms import DoctolibPrefill, profile_fields
 from brainy.agent.events import AgentError, AgentStep, ConfirmRequest, Done, NeedsUser
 from brainy.agent.holo import HoloClient
-from brainy.agent.route import book_doctolib, doctolib_url
+from brainy.agent.route import CHALLENGE_BLOCKED, LOGIN_REQUIRED, book_doctolib, doctolib_url, has_specialty
 from brainy.agent.cancel import cancel_doctolib
 from brainy.agent.loop import OUT_OF_BUDGET, SECRET_QUESTION, WebAgent
 
@@ -233,6 +233,7 @@ class BrainyApp:
     def __init__(self, args):
         self.args = args
         self.browser = None
+        self.browser_lock = asyncio.Lock()
         self.history = load_history()
         self.agent_task = None
         self.sessions = set()
@@ -242,17 +243,20 @@ class BrainyApp:
             session.emit(**event)
 
     async def get_browser(self):
-        if self.browser is not None and not self.browser._context_closed:
-            return self.browser
-        HOME.mkdir(parents=True, exist_ok=True)
-        profile = str(HOME / "chrome-profile")
-        for channel in (self.args.channel, None) if self.args.channel else (None,):
-            try:
-                self.browser = await Browser(headless=False, profile_dir=profile, channel=channel).__aenter__()
+        async with self.browser_lock:
+            if self.browser is not None and not self.browser._context_closed:
                 return self.browser
-            except Exception as exc:
-                print(f"Browser launch failed (channel={channel}): {type(exc).__name__}", file=sys.stderr)
-        raise RuntimeError("Unable to launch a browser")
+            HOME.mkdir(parents=True, exist_ok=True)
+            profile = str(HOME / "chrome-profile")
+            for channel in (self.args.channel, None) if self.args.channel else (None,):
+                try:
+                    self.browser = await Browser(
+                        headless=False, profile_dir=profile, channel=channel,
+                    ).__aenter__()
+                    return self.browser
+                except Exception as exc:
+                    print(f"Browser launch failed (channel={channel}): {type(exc).__name__}", file=sys.stderr)
+            raise RuntimeError("Unable to launch a browser")
 
     async def warm_up(self):
         """Open the agent's browser as soon as Brainy starts, so the first request does not wait for it."""
@@ -278,9 +282,28 @@ class Session:
         self.answer = None
         self.auto_reply = None
         self.confirming = False
+        self.shot_count = 0
+        self.shot_tasks = set()
 
     def emit(self, **event):
         self.outbox.put_nowait(event)
+        if event.get("type") == "agent_step" and os.getenv("BRAINY_SHOTS"):
+            self.shot_count += 1
+            task = asyncio.create_task(self._save_screenshot(self.shot_count))
+            self.shot_tasks.add(task)
+            task.add_done_callback(self.shot_tasks.discard)
+
+    async def _save_screenshot(self, number):
+        try:
+            browser = self.app.browser
+            if browser is None:
+                return
+            directory = Path(os.environ["BRAINY_SHOTS"])
+            directory.mkdir(parents=True, exist_ok=True)
+            image = await browser.screenshot()
+            await asyncio.to_thread((directory / f"step-{number:03d}.jpg").write_bytes, image)
+        except Exception as exc:
+            print(f"Screenshot failed: {type(exc).__name__}", file=sys.stderr)
 
     async def pump(self):
         while True:
@@ -306,6 +329,8 @@ class Session:
             if self.answer and not self.answer.done():
                 self.answer.set_result("non")
             pump.cancel()
+            if self.shot_tasks:
+                await asyncio.gather(*self.shot_tasks, return_exceptions=True)
 
     async def handle(self, msg):
         kind = msg.get("type")
@@ -355,9 +380,33 @@ class Session:
                     self.stop.set()
 
         watchdog = asyncio.create_task(auto_stop())
+        audio_queue = asyncio.Queue()
+
+        async def capture_audio():
+            try:
+                async for chunk in microphone_audio(self.app.args.device):
+                    await audio_queue.put(chunk)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                await audio_queue.put(exc)
+            finally:
+                await audio_queue.put(None)
+
+        async def buffered_audio():
+            while True:
+                chunk = await audio_queue.get()
+                if chunk is None:
+                    return
+                if isinstance(chunk, Exception):
+                    raise chunk
+                yield chunk
+
+        capture_task = asyncio.create_task(capture_audio())
         try:
+            await asyncio.sleep(0)
             client = GladiaClient(os.getenv("GLADIA_API_KEY", ""), self.app.args.language)
-            await client.transcribe(microphone_audio(self.app.args.device), on_transcript, self.stop)
+            await client.transcribe(buffered_audio(), on_transcript, self.stop)
         except Exception as exc:
             print(f"Listening failed: {type(exc).__name__}: {exc}", file=sys.stderr)
             self.emit(type="error", reason="Je n'arrive pas à t'entendre.",
@@ -365,6 +414,8 @@ class Session:
             return
         finally:
             watchdog.cancel()
+            capture_task.cancel()
+            await asyncio.gather(capture_task, return_exceptions=True)
         await self.on_text(" ".join([*finals, partial]).strip())
 
     async def on_text(self, text):
@@ -396,6 +447,9 @@ class Session:
     def _say(self, text):
         self.emit(type="agent_step", narration=text, action="route")
 
+    def _route_page(self, page_type, path):
+        self.emit(type="route_page", page_type=page_type, path=path)
+
     async def _confirm(self, summary):
         self.confirming = True
         self.emit(type="confirm_request", summary=summary)
@@ -409,10 +463,8 @@ class Session:
         title = request if len(request) <= 48 else request[:47].rstrip() + "…"
         status, tone = "Arrêté", "wait"
         try:
-            key = os.getenv("H_API_KEY") or os.getenv("HCOMPANY_API_KEY", "")
-            client = HoloClient(key, self.app.args.model)
-            browser = await self.app.get_browser()
             if re.search(r"annule|annuler", request, re.I) and re.search(r"rendez-vous|rdv", request, re.I):
+                browser = await self.app.get_browser()
                 cancelled = await cancel_doctolib(await browser.ensure_page(), self._say, self._confirm)
                 if cancelled is not None:
                     ok, result = cancelled
@@ -422,14 +474,41 @@ class Session:
                     return
                 self.emit(type="agent_step", narration="Je continue sur la page.", action="auto")
             route = doctolib_url(request) if not os.getenv("BRAINY_NO_ROUTE") else None
+            medical_booking = bool(re.search(
+                r"\b(?:rdv|rendez[\s-]?vous|r[ée]serv(?:e|er|ation)|doctolib|m[ée]decin|docteur|arrondissement)\b"
+                r"|\b\d{1,2}\s*(?:e|ème|eme)\b", request, re.I))
+            while medical_booking and not has_specialty(request):
+                self.emit(type="needs_user",
+                          question="Quel type de médecin ? Par exemple dermatologue ou dentiste.")
+                answer = await self.ask("Quel type de médecin ? Par exemple dermatologue ou dentiste.")
+                if not answer:
+                    break
+                request = f"{request} {answer}"
+                route = doctolib_url(request)
+            if medical_booking and not route:
+                if has_specialty(request):
+                    self.emit(type="error", reason="Je ne trouve pas la recherche Doctolib demandée.",
+                              suggestion="Précise la spécialité ou la ville.")
+                return
+            key = os.getenv("H_API_KEY") or os.getenv("HCOMPANY_API_KEY", "")
+            client = HoloClient(key, self.app.args.model)
+            browser = await self.app.get_browser()
             if route:
                 try:
-                    booked = await book_doctolib(await browser.ensure_page(), route, self._say, self._confirm)
+                    booked = await book_doctolib(await browser.ensure_page(), route, self._say, self._confirm,
+                                                 request=request, on_page=self._route_page)
                 except Exception as exc:
                     print(f"Route failed: {type(exc).__name__}: {exc}", file=sys.stderr)
                     booked = None
                 if booked:
                     ok, result = booked
+                    if result == LOGIN_REQUIRED:
+                        self.emit(type="login_required", url=browser.page.url,
+                                  selected_slot=getattr(browser.page, "_brainy_selected_slot", None))
+                        result = "Connexion Doctolib requise pour continuer."
+                    elif result == CHALLENGE_BLOCKED:
+                        self.emit(type="challenge_blocked", url=browser.page.url)
+                        result = "Vérification humaine requise par Doctolib."
                     if ok:
                         status, tone = "Terminé", "paid"
                     self.emit(type="done", result=result, ok=ok)
@@ -523,7 +602,7 @@ def start_hotkey(combo, loop, app):
         print(f"Global hotkey disabled ({type(exc).__name__}); use H in the Brainy window.", file=sys.stderr)
 
 
-async def serve_app(args, ready):
+async def serve_app(args, ready, shutdown=None):
     app = BrainyApp(args)
     warm_up = asyncio.create_task(app.warm_up())
     if getattr(args, "hotkey", ""):
@@ -540,9 +619,13 @@ async def serve_app(args, ready):
     async with serve(handler, "127.0.0.1", args.port, process_request=process_request, max_size=2**20):
         ready.set()
         try:
-            await asyncio.Future()
+            if shutdown is None:
+                await asyncio.Future()
+            else:
+                await asyncio.to_thread(shutdown.wait)
         finally:
             warm_up.cancel()
+            await asyncio.gather(warm_up, return_exceptions=True)
             await app.close()
 
 
@@ -582,7 +665,8 @@ def main():
         return 0
 
     ready = threading.Event()
-    server = threading.Thread(target=lambda: asyncio.run(serve_app(args, ready)), daemon=True)
+    shutdown = threading.Event()
+    server = threading.Thread(target=lambda: asyncio.run(serve_app(args, ready, shutdown)), daemon=True)
     server.start()
     if not ready.wait(10):
         print("Server failed to start (port already in use?)", file=sys.stderr)
@@ -593,6 +677,8 @@ def main():
         try:
             server.join()
         except KeyboardInterrupt:
+            shutdown.set()
+            server.join(timeout=10)
             return 0
         return 0
 
