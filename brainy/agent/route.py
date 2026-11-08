@@ -31,6 +31,13 @@ CHOICES = re.compile(
     r"d[ée]j[àa] consult[ée]|motif|consultation de suivi|^non$|^moi$|moi-m[eê]me|^hugo)",
     re.I,
 )
+FIRST_VISIT = re.compile(r"premi[eè]re consultation|nouveau patient", re.I)
+UNAVAILABLE = re.compile(r"pas disponible pour ce rendez-vous|aucune disponibilit[ée] en ligne", re.I)
+BACK = re.compile(r"^\s*(?:←\s*)?[ée]tape pr[ée]c[ée]dente\s*$", re.I)
+SHORT_MONTH = re.compile(
+    r"(?<!\d)(\d{1,2})(?:er)?\s+(janv|févr|fevr|mars|avr|mai|juin|juil|août|aout|sept|oct|nov|déc|dec)[a-zéû]*\.?(?!\w)", re.I)
+SHORT_MONTHS = {"janv": 1, "févr": 2, "fevr": 2, "mars": 3, "avr": 4, "mai": 5, "juin": 6, "juil": 7, "août": 8,
+                "aout": 8, "sept": 9, "oct": 10, "nov": 11, "déc": 12, "dec": 12}
 CONFIRMED = re.compile(r"rendez-vous (est )?confirmé|réservation confirmée|votre rendez-vous a été", re.I)
 LOGIN_URL = re.compile(r"/(?:sessions/new|login|connexion|authentication)(?:/|$)", re.I)
 MONTHS = {
@@ -168,11 +175,9 @@ def _date_from_text(text, today):
             return date(int(match.group(1)), int(match.group(2)), int(match.group(3)))
         except ValueError:
             continue
-    match = re.search(
-        r"\b(\d{1,2})\s+(janvier|février|mars|avril|mai|juin|juillet|août|"
-        r"septembre|octobre|novembre|décembre)\b", text, re.I)
+    match = SHORT_MONTH.search(text)
     if match:
-        day, month = int(match.group(1)), MONTHS[match.group(2).lower()]
+        day, month = int(match.group(1)), SHORT_MONTHS[match.group(2).lower()]
         year = today.year + (1 if (month, day) < (today.month, today.day) else 0)
         try:
             return date(year, month, day)
@@ -184,7 +189,7 @@ def _date_from_text(text, today):
 def _slot_date(metadata, today):
     href = metadata.get("href", "")
     selected = parse_qs(urlsplit(unquote(href)).query).get("selected_slot", [])
-    values = [*selected, metadata.get("attributes", ""), metadata.get("context", "")]
+    values = [*selected, metadata.get("labelled", ""), metadata.get("attributes", ""), metadata.get("context", "")]
     for value in values:
         match = re.search(r"20\d{2}-\d{2}-\d{2}", value or "")
         if match:
@@ -229,7 +234,9 @@ async def _slot_metadata(element):
           if (value) attrs.push(value);
         }
       }
-      return {text: (e.innerText || e.value || '').trim(), href: e.getAttribute('href') || '',
+      const labelled = (e.getAttribute('aria-labelledby') || '').split(/\s+/).filter(Boolean)
+        .map(id => document.getElementById(id)).filter(n => n && n !== e).map(n => n.innerText || '').join(' ');
+      return {text: (e.innerText || e.value || '').trim(), href: e.getAttribute('href') || '', labelled,
         context: parts.join('\\n'), attributes: attrs.join(' ')};
     }""")
 
@@ -390,7 +397,7 @@ async def book_doctolib(page, url, say, confirm, max_steps=60, request="", on_pa
     say("J'ouvre Doctolib sur les dermatologues du quartier." if "dermato" in url else "J'ouvre Doctolib.")
     await page.goto(url, wait_until="domcontentloaded")
     await page.wait_for_timeout(2500)
-    tried, idle = set(), 0
+    tried, idle, unavailable = set(), 0, 0
     constraint = parse_day_constraint(request)
     slot_started = None
     first_slot = None
@@ -408,6 +415,19 @@ async def book_doctolib(page, url, say, confirm, max_steps=60, request="", on_pa
         if await _login_wall(page):
             say("Doctolib demande de te connecter.")
             return False, LOGIN_REQUIRED
+
+        if UNAVAILABLE.search(await page.locator("body").inner_text()):
+            unavailable += 1
+            back = page.locator("a, button").filter(has_text=BACK)
+            if unavailable <= 2 and await back.count() and await back.first.is_visible():
+                say("Ce motif n'est pas réservable en ligne ; j'en choisis un autre.")
+                await back.first.click()
+            else:
+                say("Ce praticien n'est pas réservable en ligne ; j'en cherche un autre.")
+                unavailable = 0
+                await page.goto(url, wait_until="domcontentloaded")
+            await page.wait_for_timeout(1800)
+            continue
 
         final = page.locator("button").filter(has_text=FINAL)
         if await final.count() and await final.first.is_visible():
@@ -434,7 +454,9 @@ async def book_doctolib(page, url, say, confirm, max_steps=60, request="", on_pa
             acted = "form"
             say("Je choisis la première consultation pour toi.")
         if not acted and "/booking" in page.url:
-            acted = await _click_first(
+            choices = "button, a, label, [role=button], [role=radio], [role=option]"
+            acted = await _click_first(page, page.locator(choices).filter(has_text=FIRST_VISIT), tried)
+            acted = acted or await _click_first(
                 page, page.locator("button, a, label, [role=button], [role=radio], [role=option]").filter(has_text=CHOICES),
                 tried)
             if acted:

@@ -64,3 +64,14 @@ class DoctolibRouteTests(unittest.TestCase):
             "context": "",
         }
         self.assertEqual(_slot_date(metadata, date(2026, 11, 8)), date(2026, 11, 10))
+
+
+class SlotDateTests(unittest.TestCase):
+    def test_abbreviated_column_date_from_accessible_name(self):
+        metadata = {"href": "", "labelled": "jeudi\n12 nov. Rendez-vous assuré par un remplaçant : Dr. B",
+                    "attributes": "", "context": "dimanche\n8 nov.\n—\njeudi\n12 nov.\n09:30"}
+        self.assertEqual(_slot_date(metadata, date(2026, 11, 8)), date(2026, 11, 12))
+
+    def test_full_month_names_still_parse(self):
+        metadata = {"href": "", "attributes": "", "context": "lundi 1er février"}
+        self.assertEqual(_slot_date(metadata, date(2026, 11, 8)), date(2027, 2, 1))
