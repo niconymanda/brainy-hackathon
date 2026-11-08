@@ -19,6 +19,8 @@ HUMAN_CHECK = re.compile(r"captcha|cloudflare|verify you are human|je suis humai
                          r"not a robot|pas un robot", re.I)
 WEEKDAY = re.compile(r"\b(lundi|mardi|mercredi|jeudi|vendredi|samedi|dimanche|"
                      r"monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b", re.I)
+DATE = re.compile(r"\b(\d{1,2})(?:er)?\.?\s+(janv|févr|fevr|mars|avr|mai|juin|juil|août|aout|sept|oct|nov|déc|dec|"
+                  r"jan|feb|mar|apr|may|jun|jul|aug|sep|dec)", re.I)
 FORCED_SCROLL = "Brainy scrolled down instead so that other options are visible."
 # Accessible name of the element under a click: Doctolib slot buttons only show "11:15" but are
 # labelled by their date, so this tells two "11:15" slots on different days apart.
@@ -40,12 +42,14 @@ ELEMENT_NAME = """([x, y]) => {
 
 def _url_key(url):
     parts = urlsplit(url or "")
-    return parts._replace(fragment="", path=parts.path.rstrip("/") or "/").geturl()
+    route = parts.fragment if parts.fragment.startswith(("/", "!/")) else ""
+    return parts._replace(fragment=route, path=parts.path.rstrip("/") or "/").geturl()
 
 
 def _short(url):
     parts = urlsplit(url)
-    return (parts.path + ("?" + parts.query if parts.query else ""))[:100]
+    return (parts.path + ("?" + parts.query if parts.query else "") +
+            ("#" + parts.fragment if parts.fragment else ""))[:100]
 
 
 def _fold(text):
@@ -56,10 +60,16 @@ HUMAN_CHECK_QUESTION = ("Le site affiche une vérification « humain » (captcha
                         "fais-la dans la fenêtre du navigateur et dis-moi quand c'est bon.")
 
 
+def _days(text):
+    text = text.casefold()
+    return set(WEEKDAY.findall(text)), {(int(d), m[:3]) for d, m in DATE.findall(text)}
+
+
 def _other_day(target, name):
-    """The model asked for a slot on one weekday but the element under the click is labelled with another."""
-    wanted, found = set(WEEKDAY.findall(target.casefold())), set(WEEKDAY.findall(name.casefold()))
-    return bool(wanted and found and not wanted & found)
+    """The model asked for a slot on one day but the element under the click is labelled with another."""
+    (wanted, wanted_dates), (found, found_dates) = _days(target), _days(name)
+    return bool(wanted and found and not wanted & found) or bool(
+        wanted_dates and found_dates and not wanted_dates & found_dates)
 
 
 class TaskMemory:
@@ -87,6 +97,17 @@ class TaskMemory:
             self.order.remove(element)
         self.order.append(element)
 
+    def forget(self, element):
+        self.clicks.pop(element, None)
+        self.labels.pop(element, None)
+        if element in self.order:
+            self.order.remove(element)
+
+    def forget_no_effect(self, url):
+        """A form field changed: clicks that did nothing on this page (e.g. Search) may work now."""
+        for element in [e for e in self.order if e[0] == url and self.clicks[e][-1][0] == "none"]:
+            self.forget(element)
+
     def no_effect_count(self, element):
         return sum(o[0] == "none" for o in self.clicks.get(element, []))
 
@@ -101,7 +122,8 @@ class TaskMemory:
             result = {"moved": lambda: "opened " + _short(outcome[1]), "none": lambda: "had no effect",
                       "changed": lambda: "updated the page"}[outcome[0]]()
             where = "this page" if page == url else _short(page)
-            lines.append(f"on {where}: clicked '{self.labels[element][:80]}' -> {result}")
+            label = " ".join(self.labels[element].split())[:80].replace("'", "’")
+            lines.append(f"on {where}: clicked '{label}' -> {result}")
         if len(self.visited) > 1:
             lines.append("pages already visited: " + ", ".join(_short(u) for u in self.visited[-6:]))
         if not lines:
@@ -310,7 +332,7 @@ class WebAgent:
                             facts.append(f"{question} -> {answer}")
                     if stuck is not None:
                         blocks.pop(("none", element), None)
-                        memory.clicks.pop(element, None)
+                        memory.forget(element)
                     budget_steps, budget_start, nudged_at = 0, time.monotonic(), None
                     continue
                 if self._needs_confirmation(action):
@@ -377,6 +399,7 @@ class WebAgent:
                     if value is None:
                         history.append("Typing retry missed the field; no text entered. Re-locate the editable field.")
                         continue
+                    memory.forget_no_effect(url)
                     history.append(("Field now contains " + repr(value) if value else "Field empty") +
                                    ". If a suggestion list appeared, click the matching suggestion before searching.")
                 elif action.action == "scroll":
