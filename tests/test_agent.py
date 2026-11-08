@@ -871,6 +871,8 @@ class TaskMemoryTests(unittest.TestCase):
         self.assertTrue(_other_day("11:30 lundi", "11:30 mardi 10 nov."))
         self.assertFalse(_other_day("lundi 9 nov. à 11:30", "11:30 lundi 9 novembre"))
         self.assertFalse(_other_day("Rechercher", "11:30 mardi 10 nov."))
+        self.assertTrue(_other_day("créneau du 9 juin", "11:30 9 juillet"))
+        self.assertFalse(_other_day("créneau du 9 fevrier", "11:30 9 février"))
 
     def test_url_key_keeps_hash_routes(self):
         from brainy.agent.loop import _url_key

@@ -21,6 +21,9 @@ WEEKDAY = re.compile(r"\b(lundi|mardi|mercredi|jeudi|vendredi|samedi|dimanche|"
                      r"monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b", re.I)
 DATE = re.compile(r"\b(\d{1,2})(?:er)?\.?\s+(janv|févr|fevr|mars|avr|mai|juin|juil|août|aout|sept|oct|nov|déc|dec|"
                   r"jan|feb|mar|apr|may|jun|jul|aug|sep|dec)", re.I)
+MONTHS = {m: n for n, names in enumerate(["janv jan", "févr fevr feb", "mars mar", "avr apr", "mai may", "juin jun",
+                                           "juil jul", "août aout aug", "sept sep", "oct", "nov", "déc dec"], 1)
+          for m in names.split()}
 FORCED_SCROLL = "Brainy scrolled down instead so that other options are visible."
 # Accessible name of the element under a click: Doctolib slot buttons only show "11:15" but are
 # labelled by their date, so this tells two "11:15" slots on different days apart.
@@ -62,7 +65,7 @@ HUMAN_CHECK_QUESTION = ("Le site affiche une vérification « humain » (captcha
 
 def _days(text):
     text = text.casefold()
-    return set(WEEKDAY.findall(text)), {(int(d), m[:3]) for d, m in DATE.findall(text)}
+    return set(WEEKDAY.findall(text)), {(int(d), MONTHS[m]) for d, m in DATE.findall(text)}
 
 
 def _other_day(target, name):
