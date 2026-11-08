@@ -29,6 +29,7 @@ from brainy.agent.forms import DoctolibPrefill, profile_fields
 from brainy.agent.events import AgentError, AgentStep, ConfirmRequest, Done, NeedsUser
 from brainy.agent.holo import HoloClient
 from brainy.agent.route import book_doctolib, doctolib_url
+from brainy.agent.cancel import cancel_doctolib
 from brainy.agent.loop import OUT_OF_BUDGET, SECRET_QUESTION, WebAgent
 
 DIST = Path(__file__).resolve().parents[1] / "frontend" / "dist"
@@ -411,6 +412,15 @@ class Session:
             key = os.getenv("H_API_KEY") or os.getenv("HCOMPANY_API_KEY", "")
             client = HoloClient(key, self.app.args.model)
             browser = await self.app.get_browser()
+            if re.search(r"annule|annuler", request, re.I) and re.search(r"rendez-vous|rdv", request, re.I):
+                cancelled = await cancel_doctolib(await browser.ensure_page(), self._say, self._confirm)
+                if cancelled is not None:
+                    ok, result = cancelled
+                    if ok:
+                        status, tone = "Terminé", "paid"
+                    self.emit(type="done", result=result, ok=ok)
+                    return
+                self.emit(type="agent_step", narration="Je continue sur la page.", action="auto")
             route = doctolib_url(request) if not os.getenv("BRAINY_NO_ROUTE") else None
             if route:
                 try:
