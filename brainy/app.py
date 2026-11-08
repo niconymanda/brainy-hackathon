@@ -464,8 +464,7 @@ class Session:
         try:
             route = doctolib_url(request) if not os.getenv("BRAINY_NO_ROUTE") else None
             medical_booking = bool(re.search(
-                r"\b(?:rdv|rendez[\s-]?vous|r[ée]serv(?:e|er|ation)|doctolib|m[ée]decin|docteur|arrondissement)\b"
-                r"|\b\d{1,2}\s*(?:e|ème|eme)\b", request, re.I))
+                r"\b(?:rdv|rendez[\s-]?vous|doctolib|m[ée]decin|docteur)\b", request, re.I))
             while medical_booking and not has_specialty(request):
                 self.emit(type="needs_user",
                           question="Quel type de médecin ? Par exemple dermatologue ou dentiste.")
@@ -475,9 +474,8 @@ class Session:
                 request = f"{request} {answer}"
                 route = doctolib_url(request)
             if medical_booking and not route:
-                if has_specialty(request):
-                    self.emit(type="error", reason="Je ne trouve pas la recherche Doctolib demandée.",
-                              suggestion="Précise la spécialité ou la ville.")
+                self.emit(type="error", reason="Je ne trouve pas la recherche Doctolib demandée.",
+                          suggestion="Précise la spécialité, par exemple « un dermatologue dans le 9e ».")
                 return
             key = os.getenv("H_API_KEY") or os.getenv("HCOMPANY_API_KEY", "")
             client = HoloClient(key, self.app.args.model)
