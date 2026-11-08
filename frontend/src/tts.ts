@@ -1,5 +1,7 @@
 let frVoice: SpeechSynthesisVoice | null = null
 const canSpeak = 'speechSynthesis' in window
+/** The bridge rejects longer request lines (8 KiB); such texts go to the browser voice instead of being cut. */
+const MAX_TTS_URL = 7000
 
 function pickVoice() {
   if (!('speechSynthesis' in window)) return
@@ -69,8 +71,11 @@ export function speak(text: string, muted: boolean, signal: AbortSignal, tts?: s
       return
     }
     if (!tts) return browserSpeak()
+    const src = new URL(tts)
+    src.searchParams.set('text', text)
+    if (src.href.length > MAX_TTS_URL) return browserSpeak()
     cancelSpeech()
-    const player = new Audio(`${tts}?text=${encodeURIComponent(text)}`)
+    const player = new Audio(src.href)
     audio = player
     const failed = () => {
       if (audio === player) audio = null
