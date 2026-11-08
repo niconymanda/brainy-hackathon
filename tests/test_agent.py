@@ -45,6 +45,7 @@ class AgentTests(unittest.IsolatedAsyncioTestCase):
         self.browser.screenshot.return_value = b"png"
         self.browser.type.return_value = "Test User"
         self.browser.take_recovery_notes.return_value = []
+        self.browser.label_at.return_value = ""
         self.browser.page_context.return_value = {"url": "https://example.org/results", "title": "Results",
                                                   "text": "First result: Lyon"}
         self.client = AsyncMock()
@@ -82,6 +83,18 @@ class AgentTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([e.summary for e in events if isinstance(e, ConfirmRequest)], ["Je finalise."])
         self.assertEqual(self.browser.click.await_count, 2)
         self.assertEqual(events[-1], Done("Action skipped: confirmation refused. Nothing was submitted."))
+
+    async def test_gate_reads_clicked_element_label(self):
+        self.ask.return_value = "non"
+        self.browser.label_at.side_effect = ["Continuer", "Confirmer le rendez-vous"]
+        self.client.decide.side_effect = [
+            Action("click", target="Continuer button to confirm the time", narration="Je confirme l'heure."),
+            Action("click", target="Blue button at the bottom", narration="Je finalise."),
+        ]
+        agent = WebAgent(self.client, self.browser, self.ask, max_steps=5, gate_narration=False)
+        events = [event async for event in agent.run("test")]
+        self.assertEqual([e.summary for e in events if isinstance(e, ConfirmRequest)], ["Je finalise."])
+        self.assertEqual(self.browser.click.await_count, 1)
 
     async def test_label_only_gate_keeps_confirm_action(self):
         self.ask.return_value = "non"

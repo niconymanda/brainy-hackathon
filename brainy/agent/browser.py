@@ -159,6 +159,15 @@ class Browser:
         return {"url": page.url, "title": await page.title(),
                 "text": await page.evaluate("() => (document.body?.innerText || '').slice(0, 3000)")}
 
+    async def label_at(self, x, y):
+        page = await self.ensure_page()
+        return await page.evaluate("""([x, y]) => {
+            const hit = document.elementFromPoint(x, y);
+            const el = hit && (hit.closest('button, a, [role="button"], input[type="submit"], label') || hit);
+            if (!el || el.type === 'password') return '';
+            return (el.innerText || el.value || el.getAttribute('aria-label') || '').trim().slice(0, 200);
+        }""", [x, y])
+
     async def click(self, x, y):
         self._page_opened.clear()
         page = await self.ensure_page()

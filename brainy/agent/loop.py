@@ -47,10 +47,20 @@ class WebAgent:
 
     def _needs_confirmation(self, action):
         if not self.gate_narration:
-            # Clicks are gated on the element's label only: narrations like "je confirme la sélection" are not risky.
-            return action.action == "confirm" or (action.action == "click" and bool(RISKY.search(action.target)))
+            # Clicks are gated after locating, on the clicked element's own label (see _label_is_risky).
+            return action.action == "confirm"
         return action.action == "confirm" or (
             action.action == "click" and RISKY.search(action.target + " " + action.narration))
+
+    async def _label_is_risky(self, action, x, y):
+        """Gate on the text of the element under the click: "Continuer" is not risky, "Confirmer le RDV" is.
+        The model's target description ("Continuer to confirm the time") is only a fallback."""
+        try:
+            label = await self.browser.label_at(x, y)
+        except Exception:
+            label = ""
+        label = label.strip() if isinstance(label, str) else ""
+        return bool(RISKY.search(label or action.target))
 
     def _over_budget(self, steps, started):
         return ((self.wrap_up_steps is not None and steps >= self.wrap_up_steps) or
@@ -153,6 +163,15 @@ class WebAgent:
                     step = "model call"
                     x, y = await self.client.locate(screenshot, action.target, self.browser.viewport)
                     lap("locate")
+                    if (not self.gate_narration and action.action == "click"
+                            and await self._label_is_risky(action, x, y)):
+                        summary = action.narration or action.target
+                        yield ConfirmRequest(summary)
+                        step = "confirmation"
+                        if (await self.ask(summary + " Proceed? (yes/oui or no/non)")).strip().casefold() not in {"yes", "oui"}:
+                            yield Done("Action skipped: confirmation refused. Nothing was submitted.")
+                            return
+                        budget_steps, budget_start, nudged_at = 0, time.monotonic(), None
                     step = "click"
                     await self.browser.click(x, y)
                     lap("click")
