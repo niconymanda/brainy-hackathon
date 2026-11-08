@@ -28,6 +28,7 @@ from brainy.agent.browser import Browser
 from brainy.agent.forms import DoctolibPrefill, profile_fields
 from brainy.agent.events import AgentError, AgentStep, ConfirmRequest, Done, NeedsUser
 from brainy.agent.holo import HoloClient
+from brainy.agent.route import book_doctolib, doctolib_url
 from brainy.agent.loop import OUT_OF_BUDGET, SECRET_QUESTION, WebAgent
 
 DIST = Path(__file__).resolve().parents[1] / "frontend" / "dist"
@@ -391,6 +392,17 @@ class Session:
         finally:
             self.answer = None
 
+    def _say(self, text):
+        self.emit(type="agent_step", narration=text, action="route")
+
+    async def _confirm(self, summary):
+        self.confirming = True
+        self.emit(type="confirm_request", summary=summary)
+        try:
+            return bool(YES.match(await self.ask(summary) or ""))
+        finally:
+            self.confirming = False
+
     async def run_agent(self, request):
         self.emit(type="say", text="C'est noté, je m'en occupe.")
         title = request if len(request) <= 48 else request[:47].rstrip() + "…"
@@ -399,6 +411,20 @@ class Session:
             key = os.getenv("H_API_KEY") or os.getenv("HCOMPANY_API_KEY", "")
             client = HoloClient(key, self.app.args.model)
             browser = await self.app.get_browser()
+            route = doctolib_url(request) if not os.getenv("BRAINY_NO_ROUTE") else None
+            if route:
+                try:
+                    booked = await book_doctolib(await browser.ensure_page(), route, self._say, self._confirm)
+                except Exception as exc:
+                    print(f"Route failed: {type(exc).__name__}: {exc}", file=sys.stderr)
+                    booked = None
+                if booked:
+                    ok, result = booked
+                    if ok:
+                        status, tone = "Terminé", "paid"
+                    self.emit(type="done", result=result, ok=ok)
+                    return
+                self.emit(type="agent_step", narration="Je continue sur la page.", action="auto")
             goal = brainy_goal(request) + load_profile() + FRENCH + AUTONOMY + BUDGET + site_tips(request)
             args = self.app.args
             agent = WebAgent(client, browser, self.ask, max_steps=args.max_steps,
@@ -437,10 +463,11 @@ class Session:
             status, tone = "Échec", "wait"
             self.emit(type="error", reason="L'agent n'a pas pu démarrer.",
                       suggestion="Vérifie la clé H Company et le navigateur.")
-        when = datetime.now().strftime("%d/%m, %Hh%M")
-        self.app.history.insert(0, {"title": title, "when": when, "status": status, "tone": tone, "isNew": True})
-        save_history([{**item, "isNew": False} for item in self.app.history])
-        self.emit(type="history", items=self.app.history)
+        finally:
+            when = datetime.now().strftime("%d/%m, %Hh%M")
+            self.app.history.insert(0, {"title": title, "when": when, "status": status, "tone": tone, "isNew": True})
+            save_history([{**item, "isNew": False} for item in self.app.history])
+            self.emit(type="history", items=self.app.history)
 
 
 def static_response(path):
