@@ -117,20 +117,7 @@ The sections above describe the project vision. Today's terminal implementation 
 > *Prérequis*
 
 - Git and **Python 3.10+** (the code uses union annotations such as `str | None`).
-- A Gladia API key from [app.gladia.io](https://app.gladia.io), stored as `GLADIA_API_KEY`.
-- An H Company API key in `H_API_KEY` for agent/pipeline runs. Optional `H_MODEL` sets the model; default: `holo3-1-35b-a3b`. `--model` overrides it.
-- An ElevenLabs API key in `ELEVENLABS_API_KEY` for Brainy's voice. Optional `ELEVENLABS_VOICE_ID` and `ELEVENLABS_MODEL` (default: `eleven_flash_v2_5`). Without it, Brainy falls back to the system voice.
-- Internet and a microphone for speech tests, or a compatible WAV file.
-- Debian/Ubuntu microphone capture needs `sudo apt install libportaudio2`. On macOS, allow microphone access for Terminal/your IDE in **System Settings → Privacy & Security → Microphone**. Check Windows microphone privacy settings too.
-> - *Git et **Python 3.10+** (annotations comme `str | None`).*
-> - *Une clé Gladia depuis [app.gladia.io](https://app.gladia.io), dans `GLADIA_API_KEY`.*
-> - *Une clé H Company dans `H_API_KEY` pour l'agent/pipeline. `H_MODEL` est facultatif, avec `holo3-1-35b-a3b` par défaut ; `--model` le remplace.*
-> - *Une clé ElevenLabs dans `ELEVENLABS_API_KEY` pour la voix de Brainy. `ELEVENLABS_VOICE_ID` et `ELEVENLABS_MODEL` (par défaut `eleven_flash_v2_5`) sont facultatifs. Sans clé, Brainy utilise la voix du système.*
-> - *Internet et un micro pour les tests vocaux, ou un WAV compatible.*
-> - *Sous Debian/Ubuntu, installez `libportaudio2` avec la commande ci-dessus. Sous macOS, autorisez le micro pour Terminal/l'IDE dans **Réglages Système → Confidentialité et sécurité → Microphone**. Vérifiez aussi les permissions Windows.*
-## Quick Start (Windows)
-
-**Requirements:** an H Company API key, a Gladia API key, and an ElevenLabs API key.
+- An H Company API key, a Gladia API key, and an ElevenLabs API key (`ELEVENLABS_API_KEY`).
 
 1. Install dependencies (do not install `webview` separately):
 ```powershell
