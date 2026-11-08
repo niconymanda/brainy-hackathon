@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from datetime import datetime
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from websockets.asyncio.client import connect
 
@@ -217,6 +217,24 @@ class AppTests(unittest.IsolatedAsyncioTestCase):
         question = next(event["question"] for event in events if event["type"] == "needs_user")
         self.assertEqual(question, "Quel type de médecin ? Par exemple dermatologue ou dentiste.")
         self.assertEqual(self.browser.visited, [])
+
+    async def test_cancel_fallback_never_enters_booking(self):
+        for request in ('Annule mon prochain rendez-vous', 'Annuler mon rdv dermatologue'):
+            with self.subTest(request=request), \
+                    patch.object(self.browser, 'ensure_page', AsyncMock(return_value=object()), create=True), \
+                    patch.object(app_module, 'cancel_doctolib', AsyncMock(return_value=None)) as cancel, \
+                    patch.object(app_module, 'book_doctolib', AsyncMock()) as book, \
+                    patch.object(app_module, 'doctolib_url') as route:
+                async with connect('ws://127.0.0.1:8799/ws') as ws:
+                    await ws.recv()
+                    await ws.send(json.dumps({'type': 'user_text', 'text': request}))
+                    events = await self.recv_until(ws, 'confirm_request')
+                    self.assertNotIn('needs_user', [event['type'] for event in events])
+                    await ws.send(json.dumps({'type': 'confirm', 'answer': 'non'}))
+                    await self.recv_until(ws, 'history')
+                cancel.assert_awaited_once()
+                route.assert_not_called()
+                book.assert_not_awaited()
 
     async def test_microphone_capture_is_buffered_during_gladia_connect(self):
         chunks = []

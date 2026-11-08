@@ -463,19 +463,19 @@ class Session:
         title = request if len(request) <= 48 else request[:47].rstrip() + "…"
         status, tone = "Arrêté", "wait"
         try:
-            if re.search(r"annule|annuler", request, re.I) and re.search(r"rendez-vous|rdv", request, re.I):
+            cancel_intent = bool(re.search(r"annule|annuler", request, re.I) and re.search(r"rendez-vous|rdv", request, re.I))
+            if cancel_intent:
                 browser = await self.app.get_browser()
                 cancelled = await cancel_doctolib(await browser.ensure_page(), self._say, self._confirm)
                 if cancelled is not None:
                     ok, result = cancelled
                     if ok:
                         status, tone = "Terminé", "paid"
-                else:
-                    ok, result = False, "Je n'ai pas trouvé l'annulation sur Doctolib. Vérifie que ton compte est connecté."
-                self.emit(type="done", result=result, ok=ok)
-                return
-            route = doctolib_url(request) if not os.getenv("BRAINY_NO_ROUTE") else None
-            medical_booking = bool(re.search(
+                    self.emit(type="done", result=result, ok=ok)
+                    return
+                self.emit(type="agent_step", narration="Je continue sur la page.", action="auto")
+            route = doctolib_url(request) if not cancel_intent and not os.getenv("BRAINY_NO_ROUTE") else None
+            medical_booking = not cancel_intent and bool(re.search(
                 r"\b(?:rdv|rendez[\s-]?vous|doctolib|m[ée]decin|docteur)\b", request, re.I))
             while medical_booking and not has_specialty(request):
                 self.emit(type="needs_user",
