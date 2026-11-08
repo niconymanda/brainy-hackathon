@@ -139,20 +139,25 @@ class Browser:
 
     async def screenshot(self):
         # Mask password fields before any image leaves the machine.
-        for attempt in range(2):
+        for attempt in range(3):
             page = await self.ensure_page()
             try:
                 await page.wait_for_load_state("domcontentloaded")
                 return await page.screenshot(type="jpeg", quality=80,
                                              mask=[page.locator('input[type="password"]')])
             except Error as exc:
-                if attempt or (not page.is_closed() and page not in self._crashed and "Execution context was destroyed" not in str(exc)):
+                recoverable = page.is_closed() or page in self._crashed
+                gone = "Disconnected" in str(exc) or "has been closed" in str(exc)
+                if attempt == 2 or (gone and not recoverable):
                     raise
+                # A heavy page still rendering or navigating must not end the task.
+                if not recoverable:
+                    await asyncio.sleep(0.5)
 
     async def page_context(self):
         page = await self.ensure_page()
         return {"url": page.url, "title": await page.title(),
-                "text": await page.evaluate("() => (document.body?.innerText || '').slice(0, 1500)")}
+                "text": await page.evaluate("() => (document.body?.innerText || '').slice(0, 3000)")}
 
     async def click(self, x, y):
         self._page_opened.clear()

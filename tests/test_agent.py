@@ -407,7 +407,7 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
                                                         "text": "First result: Lyon"})
         script = browser.page.evaluate.call_args.args[0]
         self.assertIn("innerText", script)
-        self.assertIn("1500", script)
+        self.assertIn("3000", script)
         self.assertNotIn(".value", script)
 
     async def test_reopen_last_url_and_limit_two_per_run(self):
@@ -562,6 +562,15 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         browser.page.screenshot = AsyncMock(side_effect=[Error("Execution context was destroyed"), b"png"])
         self.assertEqual(await browser.screenshot(), b"png")
         self.assertEqual(browser.page.screenshot.await_count, 2)
+
+    async def test_screenshot_retries_transient_error(self):
+        browser = Browser(headless=True)
+        browser.page = self.page_mock()
+        browser.page.wait_for_load_state = AsyncMock()
+        browser.page.screenshot = AsyncMock(side_effect=[Error("Timeout 30000ms exceeded"), Error("Protocol error"), b"png"])
+        with patch("brainy.agent.browser.asyncio.sleep", AsyncMock()):
+            self.assertEqual(await browser.screenshot(), b"png")
+        self.assertEqual(browser.page.screenshot.await_count, 3)
 
     async def test_screenshot_other_error(self):
         browser = Browser(headless=True)
