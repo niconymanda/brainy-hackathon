@@ -63,6 +63,13 @@ async def cancel_doctolib(page, say, confirm):
         if cancel is None:
             _log("Cancellation control unavailable")
             return None
+        selected_detail = (await cancel.evaluate_handle("""el => {
+            for (let node = el.parentElement; node && node.tagName !== 'BODY'; node = node.parentElement) {
+                if (/\\d{1,2}[:h]\\d{2}/i.test(node.innerText)) return node;
+            }
+            return null;
+        }""")).as_element()
+        detail_was_cancelled = bool(selected_detail and CANCELLED.search(await selected_detail.inner_text()))
         detail = page.locator("main").first
         summary = (await (detail if await detail.count() else page.locator("body")).inner_text()).strip()
         if not re.search(r"\d{1,2}[:h]\d{2}", summary):
@@ -102,6 +109,10 @@ async def cancel_doctolib(page, say, confirm):
             current_cancelled = sum([await marker.is_visible() for marker in await cancelled_markers.all()])
             if current_cancelled > previous_cancelled:
                 break
+            if selected_detail and not detail_was_cancelled and await selected_detail.evaluate('el => el.isConnected'):
+                if CANCELLED.search(await selected_detail.inner_text()):
+                    _log("Selected appointment detail now shows cancellation")
+                    break
             await page.wait_for_timeout(500)
         else:
             raise PlaywrightTimeoutError("No new cancellation confirmation appeared")
