@@ -116,7 +116,7 @@ The sections above describe the project vision. Today's terminal implementation 
 ### 1. Requirements
 > *Prérequis*
 
-- Git and **Python 3.10+** (the code uses union annotations such as `str | None`).
+- Git and **Python 3.10+**.
 - An H Company API key, a Gladia API key, and an ElevenLabs API key.
 
 1. Install dependencies (do not install `webview` separately):
