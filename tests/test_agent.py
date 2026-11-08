@@ -422,6 +422,15 @@ class HTTPTests(unittest.IsolatedAsyncioTestCase):
                 await client._throttle()
         self.assertGreaterEqual(clock[0], 60)
 
+    async def test_locate_retries_empty_content_with_thinking(self):
+        replies = iter([None, "Click(500, 250)"])
+
+        def respond(_):
+            return httpx.Response(200, json={"choices": [{"message": {"content": next(replies)}}]})
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as http:
+            self.assertEqual(await HoloClient("test-key", http=http).locate(b"png", "OK", (1000, 800)), (500, 200))
+
     async def test_http_error(self):
         async with httpx.AsyncClient(transport=httpx.MockTransport(lambda _: httpx.Response(401))) as http:
             with self.assertRaises(httpx.HTTPStatusError):

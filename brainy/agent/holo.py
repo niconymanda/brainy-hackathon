@@ -83,7 +83,7 @@ class HoloClient:
             response = await client.post("https://api.hcompany.ai/v1/chat/completions",
                                          headers={"Authorization": "Bearer " + self.api_key}, json=data)
             response.raise_for_status()
-            return response.json()["choices"][0]["message"]["content"].strip()
+            return (response.json()["choices"][0]["message"].get("content") or "").strip()
         if self.http is None:
             # One client for the whole task: no new TLS handshake per model call.
             self.http = httpx.AsyncClient(timeout=90)
@@ -136,4 +136,7 @@ class HoloClient:
                   "position as Click(x, y) with x num pixels from the left edge and y num pixels from the top edge.\n"
                   + description)
         # Grounding is single-shot: H recommends thinking off, which makes it several times faster.
-        return parse_click(await self._chat(screenshot, prompt, think=False), viewport)
+        try:
+            return parse_click(await self._chat(screenshot, prompt, think=False), viewport)
+        except ValueError:
+            return parse_click(await self._chat(screenshot, prompt), viewport)
