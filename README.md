@@ -117,7 +117,7 @@ The sections above describe the project vision. Today's terminal implementation 
 > *Prérequis*
 
 - Git and **Python 3.10+**.
-- An H Company API key, a Gladia API key, and an ElevenLabs API key.
+- An H Company API key, a Gladia API key, and an ElevenLabs API key (`ELEVENLABS_API_KEY`).
 
 1. Install dependencies (do not install `webview` separately):
 ```powershell

@@ -11,11 +11,13 @@ import json
 import mimetypes
 import os
 import re
+import secrets
 import subprocess
 import sys
 import threading
 import time
 from datetime import datetime
+from urllib.parse import parse_qs, quote, urlsplit
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -31,10 +33,12 @@ from brainy.agent.holo import HoloClient
 from brainy.agent.route import CHALLENGE_BLOCKED, LOGIN_REQUIRED, book_doctolib, doctolib_url, has_specialty
 from brainy.agent.cancel import cancel_doctolib
 from brainy.agent.loop import OUT_OF_BUDGET, SECRET_QUESTION, WebAgent
+from brainy.tts import synthesize
 
 DIST = Path(__file__).resolve().parents[1] / "frontend" / "dist"
 HOME = Path(os.getenv("BRAINY_HOME", Path.home() / ".brainy"))
 HISTORY_FILE = HOME / "history.json"
+TTS_TOKEN = secrets.token_urlsafe(16)
 PROFILE_FILE = HOME / "profil.txt"
 PROFILE_TEMPLATE = """# Ta fiche Brainy : l'agent s'en sert pour remplir les formulaires sans te poser de questions.
 # Elle reste sur cet ordinateur. N'y mets jamais de mot de passe ni de carte bancaire.
@@ -575,6 +579,23 @@ def static_response(path):
     return Response(200, "OK", headers, body)
 
 
+async def tts_response(path):
+    """Only the Brainy window knows the token, so other pages cannot spend the ElevenLabs quota."""
+    query = parse_qs(urlsplit(path).query)
+    if not secrets.compare_digest(query.get("token", [""])[0], TTS_TOKEN):
+        return Response(403, "Forbidden", Headers([("Content-Type", "text/plain")]), b"bad token")
+    text = query.get("text", [""])[0].strip()
+    if not text:
+        return Response(400, "Bad Request", Headers([("Content-Type", "text/plain")]), b"missing text")
+    try:
+        body = await synthesize(text)
+    except Exception as exc:
+        print(f"ElevenLabs TTS failed: {type(exc).__name__}", file=sys.stderr)
+        return Response(502, "Bad Gateway", Headers([("Content-Type", "text/plain")]), b"tts failed")
+    headers = Headers([("Content-Type", "audio/mpeg"), ("Content-Length", str(len(body))), ("Cache-Control", "no-store")])
+    return Response(200, "OK", headers, body)
+
+
 async def login(args):
     """Open the agent's browser profile so the user can sign in once; cookies persist for later runs."""
     app = BrainyApp(args)
@@ -607,9 +628,12 @@ async def serve_app(args, ready, shutdown=None):
     if getattr(args, "hotkey", ""):
         start_hotkey(args.hotkey, asyncio.get_running_loop(), app)
 
-    def process_request(connection, request):
-        if request.path.split("?", 1)[0] == "/ws":
+    async def process_request(connection, request):
+        route = request.path.split("?", 1)[0]
+        if route == "/ws":
             return None
+        if route == "/tts":
+            return await tts_response(request.path)
         return static_response(request.path)
 
     async def handler(ws):
@@ -670,7 +694,8 @@ def main():
     if not ready.wait(10):
         print("Server failed to start (port already in use?)", file=sys.stderr)
         return 1
-    url = f"http://127.0.0.1:{args.port}/?app&ws=ws://127.0.0.1:{args.port}/ws"
+    ws_url = quote(f"ws://127.0.0.1:{args.port}/ws?token={TTS_TOKEN}", safe=":/")
+    url = f"http://127.0.0.1:{args.port}/?app&ws={ws_url}"
     if args.no_window:
         print(f"Brainy is running: {url}")
         try:

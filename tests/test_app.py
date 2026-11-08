@@ -7,6 +7,7 @@ from datetime import datetime
 from pathlib import Path
 from unittest.mock import patch
 
+import httpx
 from websockets.asyncio.client import connect
 
 import brainy.app as app_module
@@ -117,6 +118,24 @@ class AppTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("10h30", done["result"])
             self.assertEqual(events[-1]["items"][0]["status"], "Terminé")
             self.assertEqual(self.browser.clicks, 2)
+
+    async def test_tts_proxies_elevenlabs(self):
+        spoken = []
+
+        async def fake_synthesize(text):
+            spoken.append(text)
+            return b"mp3"
+
+        with patch.object(app_module, "synthesize", fake_synthesize):
+            async with httpx.AsyncClient() as client:
+                token = app_module.TTS_TOKEN
+                ok = await client.get("http://127.0.0.1:8799/tts", params={"token": token, "text": "Je réserve ?"})
+                empty = await client.get("http://127.0.0.1:8799/tts", params={"token": token})
+                foreign = await client.get("http://127.0.0.1:8799/tts", params={"text": "Je réserve ?"})
+        self.assertEqual((ok.status_code, ok.headers["content-type"], ok.content), (200, "audio/mpeg", b"mp3"))
+        self.assertEqual(spoken, ["Je réserve ?"])
+        self.assertEqual(empty.status_code, 400)
+        self.assertEqual(foreign.status_code, 403)
 
     async def test_obvious_question_answered_without_user(self):
         script = [Action("ask_user", text="Est-ce que je prends le rendez-vous pour toi ?"),

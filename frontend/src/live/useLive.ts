@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from 'react'
-import { cancelSpeech, speak } from '../tts'
+import { cancelSpeech, speak, ttsUrl } from '../tts'
 import type { HistoryItem, UiState } from '../types'
 import type { ClientEvent, ServerEvent } from './protocol'
 
@@ -97,7 +97,7 @@ export function useLive(url: string, muted: boolean) {
           speech = new AbortController()
           setSpoken(text)
           setSpeaking(true)
-          speak(text, mutedRef.current, speech.signal).then(() => setSpeaking(false))
+          speak(text, mutedRef.current, speech.signal, ttsUrl(url)).then(() => setSpeaking(false))
         }
       }
       sock.onclose = () => {
