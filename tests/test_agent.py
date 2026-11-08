@@ -1,4 +1,5 @@
 import unittest
+import asyncio
 import io
 import json
 from contextlib import redirect_stderr
@@ -151,6 +152,28 @@ class AgentTests(unittest.IsolatedAsyncioTestCase):
                          ["Accepter", "Tout accepter"])
         self.browser.select_choice.assert_awaited_once_with("cookie button", "Tout accepter")
         self.assertEqual(events[0], AgentStep("Selecting Tout accepter.", "select_text"))
+
+    async def test_absent_choice_is_cached_until_an_action_changes_page(self):
+        self.browser.find_choice.side_effect = [None, "cookie button"]
+        self.ask.return_value = "ok"
+        self.client.decide.side_effect = [Action("ask_user", text="Wait"),
+                                           Action("scroll", text="down"), Action("done")]
+        events = [event async for event in WebAgent(self.client, self.browser, self.ask,
+                  choices=["Accept"]).run("test")]
+        self.assertEqual(self.browser.find_choice.await_count, 2)
+        self.browser.select_choice.assert_awaited_once_with("cookie button", "Accept")
+        self.assertIsInstance(events[-1], Done)
+
+    async def test_choice_alternatives_share_one_lookup_budget(self):
+        async def delayed_lookup(_):
+            await asyncio.sleep(0.05)
+            return None
+        self.browser.find_choice.side_effect = delayed_lookup
+        self.client.decide.return_value = Action("done")
+        with patch("brainy.agent.loop.DIRECT_CHOICE_BUDGET", 0.08):
+            [event async for event in WebAgent(self.client, self.browser, self.ask,
+                          choices=["Absent A|Absent B|Absent C"]).run("test")]
+        self.assertLess(self.browser.find_choice.await_count, 3)
 
     async def test_fill_not_found_keeps_first_item_and_falls_back(self):
         self.browser.find_fill.return_value = None
@@ -486,6 +509,7 @@ class HTTPTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(await client.locate(b"png", "Name", (1000, 800)), (500, 200))
         self.assertEqual(requests[0].headers["authorization"], "Bearer test-key")
         self.assertIn(b"data:image/png;base64,", requests[0].content)
+        self.assertEqual(json.loads(requests[0].content)["max_tokens"], 256)
         prompt = json.loads(requests[0].content)["messages"][0]["content"][0]["text"]
         self.assertIn("Assume the user is already logged in to their accounts (e.g. Doctolib).", prompt)
         self.assertIn("Never log in, create an account, or ask for or enter verification codes or passwords.", prompt)
@@ -860,6 +884,14 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
         original.mouse.click.assert_awaited_once_with(10, 20)
         popup.wait_for_load_state.assert_awaited_once_with("domcontentloaded", timeout=2500)
 
+    async def test_click_without_popup_does_not_wait_for_popup_timeout(self):
+        browser = Browser()
+        browser.page = self.page_mock()
+        browser.page.mouse.click = AsyncMock()
+        browser._wait_for_page = AsyncMock()
+        await browser.click(10, 20)
+        browser._wait_for_page.assert_not_awaited()
+
     async def test_load_wait_is_best_effort(self):
         browser = Browser()
         browser.page = self.page_mock()
@@ -964,25 +996,35 @@ class BrowserTests(unittest.IsolatedAsyncioTestCase):
     async def test_scroll_centers_wheel_and_falls_back_to_container(self):
         browser = Browser()
         browser.page = self.page_mock()
-        browser.page.evaluate = AsyncMock(side_effect=[[0, 0], [0, 0], True])
+        browser.page.evaluate = AsyncMock(side_effect=[720, [0, 0], [0, 0], True])
         browser.page.mouse.move = AsyncMock()
         browser.page.mouse.wheel = AsyncMock()
         browser.page.wait_for_timeout = AsyncMock()
         self.assertIn("inner scroll container", await browser.scroll("down"))
         browser.page.mouse.move.assert_awaited_once_with(640, 450)
-        browser.page.mouse.wheel.assert_awaited_once_with(0, 600)
-        self.assertEqual(browser.page.evaluate.call_args.args[1], 600)
+        browser.page.mouse.wheel.assert_awaited_once_with(0, 720)
+        self.assertEqual(browser.page.evaluate.call_args.args[1], 720)
 
     async def test_scroll_movement_and_empty_container(self):
         for moved in (True, False):
             browser = Browser()
             browser.page = self.page_mock()
-            browser.page.evaluate = AsyncMock(side_effect=[[0], [100] if moved else [0], False])
+            browser.page.evaluate = AsyncMock(side_effect=[720, [0], [100] if moved else [0], False])
             browser.page.mouse.move = AsyncMock()
             browser.page.mouse.wheel = AsyncMock()
             browser.page.wait_for_timeout = AsyncMock()
             result = await browser.scroll("up")
             self.assertIn("viewport center" if moved else "no effect", result)
+
+    async def test_scroll_uses_visible_container_height(self):
+        browser = Browser()
+        browser.page = self.page_mock()
+        browser.page.evaluate = AsyncMock(side_effect=[400, [0], [100]])
+        browser.page.mouse.move = AsyncMock()
+        browser.page.mouse.wheel = AsyncMock()
+        browser.page.wait_for_timeout = AsyncMock()
+        await browser.scroll("down")
+        browser.page.mouse.wheel.assert_awaited_once_with(0, 400)
 
     async def test_invalid_navigation(self):
         browser = Browser()

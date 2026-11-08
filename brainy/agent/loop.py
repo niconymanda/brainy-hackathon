@@ -10,6 +10,7 @@ from .browser import SECRET_QUESTION, SecretFieldError, normalize_choice
 
 
 RISKY = re.compile(r"pay|payer|submit|envoyer|valider|book|réserver|confirm|acheter|order|commander", re.I)
+DIRECT_CHOICE_BUDGET = 3
 
 
 class WebAgent:
@@ -31,6 +32,7 @@ class WebAgent:
         history = []
         queue = self.pending_actions.copy()
         pending = None
+        unavailable_choice = None
         last_key = None
         unchanged_count = 0
         step = "navigate"
@@ -63,12 +65,17 @@ class WebAgent:
                         pending = last_key = None
                         unchanged_count = 0
                         continue
-                if queue and queue[0][0] == "choose" and not RISKY.search(queue[0][1]):
+                if (queue and queue[0][0] == "choose" and not RISKY.search(queue[0][1]) and
+                        unavailable_choice != queue[0]):
                     step = "select_text"
                     selected = False
+                    deadline = asyncio.get_running_loop().time() + DIRECT_CHOICE_BUDGET
                     for text in queue[0][1].split("|"):
+                        remaining = deadline - asyncio.get_running_loop().time()
+                        if remaining <= 0:
+                            break
                         try:
-                            element = await asyncio.wait_for(self.browser.find_choice(text.strip()), timeout=3)
+                            element = await asyncio.wait_for(self.browser.find_choice(text.strip()), timeout=remaining)
                         except (Error, asyncio.TimeoutError):
                             element = None
                         if element is not None:
@@ -80,12 +87,14 @@ class WebAgent:
                                 yield AgentStep(f"Selecting {text.strip()}.", "select_text")
                                 history.extend([f"Selected {text.strip()} directly", result])
                                 queue.pop(0)
+                                unavailable_choice = None
                                 pending = last_key = None
                                 unchanged_count = 0
                                 selected = True
                                 break
                     if selected:
                         continue
+                    unavailable_choice = queue[0]
                 step = "screenshot"
                 screenshot = await self.browser.screenshot()
                 step = "page context"
@@ -197,6 +206,7 @@ class WebAgent:
                     result = await self.browser.scroll(action.text)
                     if isinstance(result, str):
                         history.append(result)
+                unavailable_choice = None
                 history.append({"action": action.action, "target": target,
                                 "result": "executed; inspect current screenshot to verify"})
                 pending = (key, signature, target)

@@ -243,11 +243,11 @@ class Browser:
             if not page.is_closed() and page not in self._crashed:
                 raise
             await self.ensure_page()
-        try:
-            await asyncio.wait_for(self._page_opened.wait(), timeout=0.25)
-        except asyncio.TimeoutError:
-            pass
-        await self._wait_for_page()
+        # Page events are delivered while Playwright resolves the click. Yield once
+        # for an event already queued, without imposing a fixed no-popup delay.
+        await asyncio.sleep(0)
+        if self._page_opened.is_set():
+            await self._wait_for_page()
 
     async def type(self, text):
         editable = await self.page.evaluate("""() => {
@@ -472,11 +472,22 @@ class Browser:
 
     async def scroll(self, direction):
         page = await self.ensure_page()
-        delta = -600 if direction == "up" else 600
+        viewport_delta = """() => {
+            let target = document.elementFromPoint(innerWidth / 2, innerHeight / 2);
+            while (target && !(target.clientHeight > 0 && target.scrollHeight > target.clientHeight &&
+                    /auto|scroll/.test(getComputedStyle(target).overflowY))) target = target.parentElement;
+            target ||= document.scrollingElement;
+            const rect = target.getBoundingClientRect();
+            const visibleHeight = Math.min(rect.bottom, innerHeight) - Math.max(rect.top, 0);
+            return Math.max(1, Math.round(Math.min(target.clientHeight, visibleHeight) * 0.8));
+        }"""
         state = """() => [window.scrollX, window.scrollY, ...Array.from(document.querySelectorAll('*'))
             .filter(el => el.scrollHeight > el.clientHeight && el.clientHeight > 0)
             .map(el => el.scrollTop)]"""
         async def perform():
+            delta = await page.evaluate(viewport_delta)
+            if direction == "up":
+                delta = -delta
             before = await page.evaluate(state)
             await page.mouse.move(self.viewport[0] / 2, self.viewport[1] / 2)
             await page.mouse.wheel(0, delta)
@@ -492,7 +503,9 @@ class Browser:
                 candidates.sort((a,b) => b.clientWidth*b.clientHeight - a.clientWidth*a.clientHeight);
                 for (const el of candidates) {
                     const before = el.scrollTop;
-                    el.scrollTop += delta;
+                    const rect = el.getBoundingClientRect();
+                    const visibleHeight = Math.min(rect.bottom, innerHeight) - Math.max(rect.top, 0);
+                    el.scrollTop += Math.sign(delta) * Math.max(1, Math.round(Math.min(el.clientHeight, visibleHeight) * 0.8));
                     if (el.scrollTop !== before) return true;
                 }
                 return false;

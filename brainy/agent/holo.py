@@ -61,7 +61,7 @@ class HoloClient:
         data = {"model": self.model, "messages": [{"role": "user", "content": [
             {"type": "text", "text": prompt},
             {"type": "image_url", "image_url": {"url": "data:image/png;base64," + base64.b64encode(screenshot).decode()}},
-        ]}], "temperature": 0, "max_tokens": 512}
+        ]}], "temperature": 0, "max_tokens": 256}
         async def send(client):
             response = await client.post("https://api.hcompany.ai/v1/chat/completions",
                                          headers={"Authorization": "Bearer " + self.api_key}, json=data)
