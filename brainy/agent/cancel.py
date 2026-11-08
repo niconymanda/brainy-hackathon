@@ -93,10 +93,18 @@ async def cancel_doctolib(page, say, confirm):
         if final is None:
             _log("Final cancellation control unavailable")
             return None
+        cancelled_markers = page.get_by_text(CANCELLED)
+        previous_cancelled = sum([await marker.is_visible() for marker in await cancelled_markers.all()])
         await final.click(timeout=3000)
         submitted = True
         _log("Submitted cancellation")
-        await page.get_by_text(CANCELLED).first.wait_for(timeout=10000)
+        for _ in range(20):
+            current_cancelled = sum([await marker.is_visible() for marker in await cancelled_markers.all()])
+            if current_cancelled > previous_cancelled:
+                break
+            await page.wait_for_timeout(500)
+        else:
+            raise PlaywrightTimeoutError("No new cancellation confirmation appeared")
         _log("Verified cancelled appointment state")
         say("Le rendez-vous est maintenant annulé.")
         return True, "Ton rendez-vous est bien annulé sur Doctolib."

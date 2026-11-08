@@ -68,3 +68,12 @@ class CancelTests(unittest.IsolatedAsyncioTestCase):
         result = await self.route(body)
         self.assertFalse(result[0])
         self.assertIn('vérifier', result[1])
+
+    async def test_old_cancelled_appointment_does_not_verify_failed_cancellation(self):
+        body = FIXTURE.replace('<main>', '<aside>Rendez-vous annulé — Dr Dupont — 1 janvier 2020 à 09h00</aside><main>').replace(
+            "document.querySelector('main').innerHTML='<h1>Rendez-vous annulé</h1>';",
+            "document.querySelector('#modal').close();")
+        result = await self.route(body)
+        self.assertFalse(result[0])
+        self.assertIn('vérifier', result[1])
+        self.assertTrue(await self.page.locator('#detail').is_visible())
