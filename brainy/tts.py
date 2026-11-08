@@ -20,7 +20,7 @@ async def synthesize(text):
         raise ValueError("Set ELEVENLABS_API_KEY in the environment or .env file.")
     voice = os.getenv("ELEVENLABS_VOICE_ID") or DEFAULT_VOICE
     body = {"text": text, "model_id": os.getenv("ELEVENLABS_MODEL") or DEFAULT_MODEL}
-    async with httpx.AsyncClient(timeout=30) as client:
+    async with httpx.AsyncClient(timeout=10) as client:
         response = await client.post(API_URL.format(voice=voice), params={"output_format": "mp3_44100_128"},
                                      headers={"xi-api-key": key}, json=body)
         response.raise_for_status()

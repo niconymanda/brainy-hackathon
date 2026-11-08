@@ -2,6 +2,8 @@ let frVoice: SpeechSynthesisVoice | null = null
 const canSpeak = 'speechSynthesis' in window
 /** The bridge rejects longer request lines (8 KiB); such texts go to the browser voice instead of being cut. */
 const MAX_TTS_URL = 7000
+/** Longer than the bridge's ElevenLabs timeout, so a failed request still falls back to the browser voice. */
+const TTS_LOAD_MS = 12000
 
 function pickVoice() {
   if (!('speechSynthesis' in window)) return
@@ -77,13 +79,27 @@ export function speak(text: string, muted: boolean, signal: AbortSignal, tts?: s
     cancelSpeech()
     const player = new Audio(src.href)
     audio = player
+    let fellBack = false
     const failed = () => {
-      if (audio === player) audio = null
+      if (fellBack) return
+      if (audio !== player) return finish()
+      fellBack = true
+      audio = null
+      player.onended = player.onerror = player.onpause = player.onplaying = null
+      player.pause()
       browserSpeak()
     }
     player.onended = finish
     player.onerror = failed
-    fallback = window.setTimeout(finish, estimate + 15000)
+    player.onpause = () => {
+      if (audio !== player) finish()
+    }
+    player.onplaying = () => {
+      window.clearTimeout(fallback)
+      const ms = Number.isFinite(player.duration) ? player.duration * 1000 : estimate
+      fallback = window.setTimeout(finish, ms + 3000)
+    }
+    fallback = window.setTimeout(failed, TTS_LOAD_MS)
     player.play().catch(failed)
   })
 }
