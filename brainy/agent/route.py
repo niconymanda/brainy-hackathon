@@ -32,7 +32,8 @@ CHOICES = re.compile(
     re.I,
 )
 FIRST_VISIT = re.compile(r"premi[eè]re consultation|nouveau patient", re.I)
-UNAVAILABLE = re.compile(r"prise de rendez-vous en ligne n['’]est (?:malheureusement )?pas disponible", re.I)
+UNAVAILABLE = re.compile(
+    r"prise de rendez-vous en ligne n['’]est (?:malheureusement )?pas disponible|aucune disponibilit[ée] en ligne", re.I)
 FOLLOW_UP = re.compile(r"\bsuivi\b|d[ée]j[àa] (?:consult|patient|vu)|contr[ôo]le", re.I)
 SHORT_MONTH = re.compile(
     r"(?<!\d)(\d{1,2})(?:er)?\s+(janv|févr|fevr|mars|avr|mai|juin|juil|août|aout|sept|oct|nov|déc|dec)[a-zéû]*\.?(?!\w)", re.I)
