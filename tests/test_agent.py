@@ -300,6 +300,15 @@ class AgentTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.browser.scroll.await_count, 3)
         self.assertEqual(str(histories[-1]).count("'11:15' was already clicked"), 4)
 
+    async def test_human_verification_is_left_to_the_user(self):
+        clicked = self.site({self.RESULTS: {}}, self.RESULTS)
+        self.ask.return_value = "c'est fait"
+        events, goals, histories = await self.run_site(
+            [Action("click", target="Checkbox 'Verify you are human' (Cloudflare)"), Action("done", text="ok")])
+        self.assertEqual(clicked, [])
+        self.client.locate.assert_not_awaited()
+        self.assertIn("captcha", self.ask.await_args.args[0])
+
     async def test_click_landing_on_another_day_is_blocked(self):
         clicked = self.site({self.RESULTS: {"11:30": self.BOOKING}}, self.RESULTS)
         page = MagicMock()

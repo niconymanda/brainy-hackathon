@@ -118,6 +118,7 @@ class HoloClient:
             "On autocomplete fields, click the matching suggestion after typing and before submitting or searching. "
             "Before re-submitting a search, check whether the current sub-step is already satisfied: "
             "results may already be visible. Use the page URL, title and visible text as well as the screenshot. "
+            "Never interact with a CAPTCHA or 'verify you are human' check: use ask_user so the user does it. "
             "Never repeat a click listed under 'Already tried' that led somewhere you came back from or had no "
             "effect; a BLOCKED note means Brainy did not execute your action, so choose a different one. To fix a "
             "wrong choice (e.g. a slot on the wrong day), pick the right option on the current page rather than "

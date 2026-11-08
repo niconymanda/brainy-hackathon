@@ -15,6 +15,8 @@ WRAP_UP = ("Search budget used up: stop searching now. Use ask_user to propose t
            "If you are already completing a booking that matches the request, ignore this and continue.")
 OUT_OF_BUDGET = "This is taking longer than expected. Should I keep going, or stop here?"
 SECRET_QUESTION = re.compile(r"\b(?:password|mot\s+de\s+passe|card|carte|cvv|cvc|code|pin|iban|otp|sms)\b", re.I)
+HUMAN_CHECK = re.compile(r"captcha|cloudflare|verify you are human|je suis humain|vérifiez que vous|"
+                         r"not a robot|pas un robot", re.I)
 WEEKDAY = re.compile(r"\b(lundi|mardi|mercredi|jeudi|vendredi|samedi|dimanche|"
                      r"monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b", re.I)
 FORCED_SCROLL = "Brainy scrolled down instead so that other options are visible."
@@ -48,6 +50,10 @@ def _short(url):
 
 def _fold(text):
     return " ".join(str(text).casefold().split())
+
+
+HUMAN_CHECK_QUESTION = ("Le site affiche une vérification « humain » (captcha). Je ne la passe pas à ta place : "
+                        "fais-la dans la fenêtre du navigateur et dis-moi quand c'est bon.")
 
 
 def _other_day(target, name):
@@ -248,6 +254,8 @@ class WebAgent:
                     question = result
                 if action.action == "ask_user":
                     question = action.text or action.narration
+                elif action.action in {"click", "confirm", "type"} and HUMAN_CHECK.search(action.target):
+                    question = HUMAN_CHECK_QUESTION
                 elif question is None and nudged_at is not None and budget_steps - nudged_at > self.wrap_up_grace:
                     question = OUT_OF_BUDGET
                 stuck = None
