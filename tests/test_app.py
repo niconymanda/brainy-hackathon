@@ -209,10 +209,72 @@ class AppTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(kinds[0], "listening")
                 self.assertEqual(events[-2], {"type": "transcript", "text": "Un dermato samedi", "final": True})
 
+    async def test_booking_without_specialty_asks_before_starting_agent(self):
+        async with connect("ws://127.0.0.1:8799/ws") as ws:
+            await ws.recv()
+            await ws.send(json.dumps({"type": "user_text", "text": "Réserve-moi un rendez-vous dans le 9e"}))
+            events = await self.recv_until(ws, "needs_user")
+        question = next(event["question"] for event in events if event["type"] == "needs_user")
+        self.assertEqual(question, "Quel type de médecin ? Par exemple dermatologue ou dentiste.")
+        self.assertEqual(self.browser.visited, [])
+
+    async def test_microphone_capture_is_buffered_during_gladia_connect(self):
+        chunks = []
+        produced_before_consume = []
+        received = []
+
+        async def microphone(device):
+            for chunk in (b"first", b"second", b"third"):
+                chunks.append(chunk)
+                yield chunk
+
+        class SlowGladia:
+            def __init__(self, *args):
+                pass
+
+            async def transcribe(self, audio, callback, stop):
+                await asyncio.sleep(0.3)
+                produced_before_consume.extend(chunks)
+                async for chunk in audio:
+                    received.append(chunk)
+
+        with patch("brainy.stt.client.GladiaClient", SlowGladia), \
+                patch("brainy.stt.audio.microphone_audio", microphone), \
+                patch.dict("os.environ", {"GLADIA_API_KEY": "test-key"}):
+            async with connect("ws://127.0.0.1:8799/ws") as ws:
+                await ws.recv()
+                await ws.send(json.dumps({"type": "start_listening"}))
+                await self.recv_until(ws, "error")
+
+        self.assertEqual(produced_before_consume, [b"first", b"second", b"third"])
+        self.assertEqual(chunks, [b"first", b"second", b"third"])
+        self.assertEqual(received, chunks)
+
     async def test_static_fallback(self):
         response = app_module.static_response("/../../etc/passwd")
         self.assertIn(response.status_code, (200, 500))
         self.assertNotIn(b"root:", response.body)
+
+
+class BrowserConcurrencyTests(unittest.IsolatedAsyncioTestCase):
+    async def test_concurrent_browser_start_reuses_one_context(self):
+        launches = []
+
+        class SlowBrowser:
+            def __init__(self, **kwargs):
+                launches.append(kwargs)
+                self._context_closed = False
+
+            async def __aenter__(self):
+                await asyncio.sleep(0.05)
+                return self
+
+        app = app_module.BrainyApp(argparse.Namespace(channel="chrome"))
+        with patch.object(app_module, "Browser", SlowBrowser):
+            first, second = await asyncio.gather(app.get_browser(), app.get_browser())
+
+        self.assertIs(first, second)
+        self.assertEqual(len(launches), 1)
 
 
 class HelperTests(unittest.TestCase):
