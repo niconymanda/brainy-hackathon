@@ -97,7 +97,12 @@ SITE_TIPS = {
                  "and never retype the location; scroll down the list, skipping practitioners marked Aucune "
                  "disponibilité en ligne. Only click a slot on a day the "
                  "request allows. For the visit reason, take the first-visit one (e.g. Première consultation) unless "
-                 "the request says it is a follow-up; never ask which reason."),
+                 "the request says it is a follow-up; never ask which reason. On the checkout form, fill each "
+                 "empty field once, top to bottom, from the user's profile: Ville de naissance is the profile's birth "
+                 "city only (type it, then click its suggestion with the department, e.g. 'Strasbourg (67)'), never "
+                 "the address city; Adresse is the street only, then Code postal, then Ville = the address city. A "
+                 "field already filled or with a green check is done: never retype it. Answer 'Avez-vous déjà "
+                 "consulté ce soignant ?' with Non, then scroll to the final button."),
 }
 STUCK = re.compile(r"^I'm stuck: repeating '(.*)' has no visible effect\.", re.S)
 
