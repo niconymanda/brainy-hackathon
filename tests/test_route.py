@@ -78,7 +78,10 @@ class SlotDateTests(unittest.TestCase):
 
 
 class VisitTypeTests(unittest.TestCase):
-    def test_explicit_first_visit_wins_over_negated_follow_up(self):
-        from brainy.agent.route import FIRST_VISIT, FOLLOW_UP
-        request = "première consultation, pas de suivi"
-        self.assertTrue(bool(FIRST_VISIT.search(request)) or not FOLLOW_UP.search(request))
+    def test_negated_mentions_are_ignored(self):
+        from brainy.agent.route import wants_first_visit
+        self.assertTrue(wants_first_visit("première consultation, pas de suivi"))
+        self.assertFalse(wants_first_visit("suivi, pas une première consultation"))
+        self.assertFalse(wants_first_visit("un rendez-vous de suivi chez mon dermatologue"))
+        self.assertTrue(wants_first_visit("Je veux un dentiste dans le 11e lundi"))
+        self.assertTrue(wants_first_visit("dermatologue, pas en contrôle"))
