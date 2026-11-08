@@ -15,6 +15,8 @@ WRAP_UP = ("Search budget used up: stop searching now. Use ask_user to propose t
            "If you are already completing a booking that matches the request, ignore this and continue.")
 OUT_OF_BUDGET = "This is taking longer than expected. Should I keep going, or stop here?"
 SECRET_QUESTION = re.compile(r"\b(?:password|mot\s+de\s+passe|card|carte|cvv|cvc|code|pin|iban|otp|sms)\b", re.I)
+WEEKDAY = re.compile(r"\b(lundi|mardi|mercredi|jeudi|vendredi|samedi|dimanche|"
+                     r"monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b", re.I)
 FORCED_SCROLL = "Brainy scrolled down instead so that other options are visible."
 # Accessible name of the element under a click: Doctolib slot buttons only show "11:15" but are
 # labelled by their date, so this tells two "11:15" slots on different days apart.
@@ -46,6 +48,12 @@ def _short(url):
 
 def _fold(text):
     return " ".join(str(text).casefold().split())
+
+
+def _other_day(target, name):
+    """The model asked for a slot on one weekday but the element under the click is labelled with another."""
+    wanted, found = set(WEEKDAY.findall(target.casefold())), set(WEEKDAY.findall(name.casefold()))
+    return bool(wanted and found and not wanted & found)
 
 
 class TaskMemory:
@@ -160,17 +168,17 @@ class WebAgent:
         history = []
         memory = TaskMemory()
         pending = None
-        blocks = {}
+        blocks, relented = {}, set()
         step = "navigate"
         budget_steps, budget_start, nudged_at = 0, time.monotonic(), None
         facts, recent = [], []
         lap = Laps()
 
         def block(reason, note):
-            """Refuse a repeated action. The second refusal in a row also scrolls, so the model sees other options."""
+            """Refuse a repeated action. Every second refusal also scrolls, so the model sees other options."""
             blocks[reason] = blocks.get(reason, 0) + 1
             history.append("BLOCKED, not executed: " + note)
-            return blocks[reason] >= 2
+            return blocks[reason] % 2 == 0
 
         try:
             await self.browser.start_run()
@@ -251,6 +259,12 @@ class WebAgent:
                     element = (url, _fold(name or label or action.target))
                     shown = name or label or action.target
                     led_to = memory.led_to(element)
+                    if _other_day(action.target, name):
+                        # Grounding picked the neighbouring day column; clicking it starts a wrong-day booking.
+                        history.append(f"BLOCKED, not executed: the element at that position is '{name}', not "
+                                       f"'{action.target}'. Describe the wanted element more precisely (e.g. the "
+                                       "slot in the column under its day header) or scroll.")
+                        continue
                     if memory.no_effect_count(element) >= 2:
                         if blocks.get(("none", element), 0) >= 2:
                             stuck = shown
@@ -263,7 +277,8 @@ class WebAgent:
                                 history.append(FORCED_SCROLL)
                             continue
                     elif led_to and not memory.same_page(led_to, url):
-                        if blocks.get(("moved", element), 0) < 2:
+                        # Insisting twice gets the click through once; a cycle never gets a second pass.
+                        if blocks.get(("moved", element), 0) < 2 or element in relented:
                             if block(("moved", element), f"'{shown}' was already clicked on this page earlier in "
                                      f"this task: it opened {_short(led_to)} and you came back. Clicking it again "
                                      "repeats the same path. Choose a different slot, practitioner or option, or "
@@ -271,7 +286,7 @@ class WebAgent:
                                 await self.browser.scroll("down")
                                 history.append(FORCED_SCROLL)
                             continue
-                        blocks.pop(("moved", element))
+                        relented.add(element)
                 if question is not None:
                     yield NeedsUser(question, after_budget=nudged_at is not None)
                     step = "user answer"

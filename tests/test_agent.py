@@ -290,13 +290,30 @@ class AgentTests(unittest.IsolatedAsyncioTestCase):
         self.assertLessEqual(self.client.locate.await_count + self.client.decide.await_count, 2 * 5)
         self.assertEqual(events[-1], Done("ok"))
 
-    async def test_cycle_block_scrolls_then_relents_when_insisting(self):
+    async def test_cycle_block_scrolls_then_relents_only_once(self):
         clicked = self.site({self.RESULTS: {"11:15": self.BOOKING},
                              self.BOOKING: {"Étape précédente": self.RESULTS}}, self.RESULTS)
         slot, back = Action("click", target="11:15"), Action("click", target="Étape précédente")
-        await self.run_site([slot, back, slot, slot, slot, back, Action("done")])
-        self.assertEqual(clicked, ["11:15", "Étape précédente", "11:15"])
-        self.browser.scroll.assert_awaited_once_with("down")
+        events, goals, histories = await self.run_site(
+            [slot, back, slot, slot, slot, back, back, back, slot, slot, Action("done")])
+        self.assertEqual(clicked, ["11:15", "Étape précédente", "11:15", "Étape précédente"])
+        self.assertEqual(self.browser.scroll.await_count, 3)
+        self.assertEqual(str(histories[-1]).count("'11:15' was already clicked"), 4)
+
+    async def test_click_landing_on_another_day_is_blocked(self):
+        clicked = self.site({self.RESULTS: {"11:30": self.BOOKING}}, self.RESULTS)
+        page = MagicMock()
+        page.evaluate = AsyncMock(side_effect=["11:30 mardi 10 novembre | Dr E", "11:30 lundi 9 novembre | Dr E"])
+        self.browser.ensure_page.return_value = page
+        self.client.locate.side_effect = None
+        self.client.locate.return_value = (0, 0)
+        events, goals, histories = await self.run_site(
+            [Action("click", target="Créneau du lundi 9 novembre à 11:30"),
+             Action("click", target="Créneau 11:30 dans la colonne lundi"), Action("done")])
+        self.assertEqual(clicked, ["11:30"])
+        self.assertIn("BLOCKED, not executed: the element at that position is '11:30 mardi 10 novembre | Dr E'",
+                      str(histories[1]))
+        self.assertIn("lundi 9 novembre | Dr E' -> opened /booking?slot=tue", goals[2])
 
     async def test_cycle_detection_follows_accessible_name_not_visible_text(self):
         clicked = self.site({self.RESULTS: {"11:15": self.BOOKING},
