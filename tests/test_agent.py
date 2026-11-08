@@ -486,6 +486,12 @@ class HTTPTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(await client.locate(b"png", "Name", (1000, 800)), (500, 200))
         self.assertEqual(requests[0].headers["authorization"], "Bearer test-key")
         self.assertIn(b"data:image/png;base64,", requests[0].content)
+        prompt = json.loads(requests[0].content)["messages"][0]["content"][0]["text"]
+        self.assertIn("Assume the user is already logged in to their accounts (e.g. Doctolib).", prompt)
+        self.assertIn("Never log in, create an account, or ask for or enter verification codes or passwords.", prompt)
+        self.assertIn("If a login, sign-up or verification wall appears, use ask_user to tell the user "
+                      "to log in manually in the browser and wait for them.", prompt)
+        self.assertIn("Never request or enter passwords, credentials or payment secrets.", prompt)
         self.assertIn(b"Localize an element on the GUI image", requests[1].content)
 
     async def test_http_error(self):

@@ -196,6 +196,10 @@ python -m brainy.agent "Fill Customer name with Test User, choose Large pizza si
 python -m brainy.agent "Describe the next step" --url https://example.org --headless
 ```
 
+Holo assumes you are already logged in and never logs in, creates accounts or requests/enters passwords or verification codes; if blocked, it asks you to log in manually in the browser and waits.
+
+> *Holo suppose que vous êtes déjà connecté et ne se connecte jamais, ne crée pas de compte et ne demande/saisit ni mot de passe ni code de vérification ; en cas de blocage, il vous demande de vous connecter manuellement dans le navigateur et attend.*
+
 The browser is visible by default; `--headless` hides it and `--profile-dir PATH` optionally keeps a private browser profile. No microphone is used. The async `WebAgent.run()` iterator emits narration, user questions, confirmation requests, completion and safe errors; its `ask` callback collects replies. Follow-up answers are sent to the model, except when the question mentions secrets (password/mot de passe, card/carte, CVV/CVC, code, PIN, IBAN, OTP/SMS): only a manual-step acknowledgement is sent in those cases. Replies `stop`, `non` or `no` stop the run. Runs stop after 25 decisions by default.
 
 > *Le navigateur est visible par défaut ; `--headless` le masque et `--profile-dir CHEMIN` conserve éventuellement un profil privé. Aucun microphone n'est utilisé. L'itérateur asynchrone `WebAgent.run()` émet narration, questions, confirmations, résultat et erreurs ; le callback `ask` recueille les réponses. Les réponses aux questions sont envoyées au modèle, sauf si la question mentionne un secret (password/mot de passe, card/carte, CVV/CVC, code, PIN, IBAN, OTP/SMS) : seul un accusé d'intervention manuelle est alors transmis. Les réponses `stop`, `non` ou `no` arrêtent l'exécution. Une exécution s'arrête après 25 décisions par défaut.*
