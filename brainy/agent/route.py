@@ -32,8 +32,8 @@ CHOICES = re.compile(
     re.I,
 )
 FIRST_VISIT = re.compile(r"premi[eè]re consultation|nouveau patient", re.I)
-UNAVAILABLE = re.compile(r"pas disponible pour ce rendez-vous|aucune disponibilit[ée] en ligne", re.I)
-BACK = re.compile(r"^\s*(?:←\s*)?[ée]tape pr[ée]c[ée]dente\s*$", re.I)
+UNAVAILABLE = re.compile(r"prise de rendez-vous en ligne n['’]est (?:malheureusement )?pas disponible", re.I)
+FOLLOW_UP = re.compile(r"\bsuivi\b|d[ée]j[àa] (?:consult|patient|vu)|contr[ôo]le", re.I)
 SHORT_MONTH = re.compile(
     r"(?<!\d)(\d{1,2})(?:er)?\s+(janv|févr|fevr|mars|avr|mai|juin|juil|août|aout|sept|oct|nov|déc|dec)[a-zéû]*\.?(?!\w)", re.I)
 SHORT_MONTHS = {"janv": 1, "févr": 2, "fevr": 2, "mars": 3, "avr": 4, "mai": 5, "juin": 6, "juil": 7, "août": 8,
@@ -397,7 +397,8 @@ async def book_doctolib(page, url, say, confirm, max_steps=60, request="", on_pa
     say("J'ouvre Doctolib sur les dermatologues du quartier." if "dermato" in url else "J'ouvre Doctolib.")
     await page.goto(url, wait_until="domcontentloaded")
     await page.wait_for_timeout(2500)
-    tried, idle, unavailable = set(), 0, 0
+    tried, idle = set(), 0
+    first_visit = not FOLLOW_UP.search(request)
     constraint = parse_day_constraint(request)
     slot_started = None
     first_slot = None
@@ -416,17 +417,11 @@ async def book_doctolib(page, url, say, confirm, max_steps=60, request="", on_pa
             say("Doctolib demande de te connecter.")
             return False, LOGIN_REQUIRED
 
-        if UNAVAILABLE.search(await page.locator("body").inner_text()):
-            unavailable += 1
-            back = page.locator("a, button").filter(has_text=BACK)
-            if unavailable <= 2 and await back.count() and await back.first.is_visible():
-                say("Ce motif n'est pas réservable en ligne ; j'en choisis un autre.")
-                await back.first.click()
-            else:
-                say("Ce praticien n'est pas réservable en ligne ; j'en cherche un autre.")
-                unavailable = 0
-                await page.goto(url, wait_until="domcontentloaded")
-            await page.wait_for_timeout(1800)
+        if "/booking" in page.url and UNAVAILABLE.search(await page.locator("body").inner_text()):
+            # Another motive would change the visit type; another practitioner keeps the request intact.
+            say("Ce rendez-vous n'est pas réservable en ligne ; je cherche un autre créneau.")
+            await page.goto(url, wait_until="domcontentloaded")
+            await page.wait_for_timeout(2500)
             continue
 
         final = page.locator("button").filter(has_text=FINAL)
@@ -455,7 +450,7 @@ async def book_doctolib(page, url, say, confirm, max_steps=60, request="", on_pa
             say("Je choisis la première consultation pour toi.")
         if not acted and "/booking" in page.url:
             choices = "button, a, label, [role=button], [role=radio], [role=option]"
-            acted = await _click_first(page, page.locator(choices).filter(has_text=FIRST_VISIT), tried)
+            acted = first_visit and await _click_first(page, page.locator(choices).filter(has_text=FIRST_VISIT), tried)
             acted = acted or await _click_first(
                 page, page.locator("button, a, label, [role=button], [role=radio], [role=option]").filter(has_text=CHOICES),
                 tried)

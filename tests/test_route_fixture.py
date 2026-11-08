@@ -23,8 +23,8 @@ MONTHS = ("janv.", "févr.", "mars", "avr.", "mai", "juin", "juil.", "août", "s
 def column(index, day, slots):
     buttons = "".join(
         f'<span class="sr-only" id="s{index}-{n}-sub">Rendez-vous assuré par un remplaçant : Dr. B</span>'
-        f'<a href="/booking/motives.html" id="s{index}-{n}" aria-labelledby="s{index}-{n} d{index} s{index}-{n}-sub">'
-        f'{slot}</a>' for n, slot in enumerate(slots)) or "<span>—</span>"
+        f'<a href="{href}" id="s{index}-{n}" aria-labelledby="s{index}-{n} d{index} s{index}-{n}-sub">'
+        f'{slot}</a>' for n, (slot, href) in enumerate(slots)) or "<span>—</span>"
     return (f'<div class="column"><div id="d{index}" style="display:flex;flex-direction:column"><span>{DAYS[day.weekday()]}</span>'
             f'<span>{day.day} {MONTHS[day.month - 1]}</span></div>{buttons}</div>')
 
@@ -44,10 +44,12 @@ class RouteFixtureTests(unittest.TestCase):
         today = date.today()
         monday = today + timedelta(days=(7 - today.weekday()) % 7 or 7)
         tuesday_before = monday - timedelta(days=6)
-        columns = column(0, tuesday_before, ["11:30"]) + column(1, monday - timedelta(days=1), []) + \
-            column(2, monday, ["14:00"])
+        columns = column(0, tuesday_before, [("11:30", "/booking/motives2.html")]) + \
+            column(1, monday - timedelta(days=1), []) + \
+            column(2, monday, [("14:00", "/booking/motives.html"), ("15:00", "/booking/motives2.html")])
         (self.root / "results.html").write_text(
-            f'<!doctype html><meta charset="utf-8"><h2>Dr B</h2><div class="slots">{columns}</div>', encoding="utf-8")
+            '<!doctype html><meta charset="utf-8"><h2>Dr A</h2><p>Aucune disponibilité en ligne</p>'
+            f'<h2>Dr B</h2><div class="slots">{columns}</div>', encoding="utf-8")
         self.monday = monday
         server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), functools.partial(Quiet, directory=self.root))
         self.server = server
@@ -70,16 +72,22 @@ class RouteFixtureTests(unittest.TestCase):
             await browser.close()
         return result, said, visited, selected
 
-    def test_requested_weekday_first_visit_then_another_motive_when_unavailable(self):
+    def test_requested_weekday_first_visit_then_another_slot_when_unavailable(self):
         result, said, visited, selected = asyncio.run(self.book("Je veux un dermatologue dans le 9e lundi"))
         self.assertEqual(result, (False, LOGIN_REQUIRED))
         self.assertEqual(selected, {"date": self.monday.isoformat(), "matches_constraint": True})
         self.assertIn("Je choisis « Première consultation de dermatologie ».", said)
-        self.assertIn("Ce motif n'est pas réservable en ligne ; j'en choisis un autre.", said)
-        self.assertIn("Je choisis « Consultation de suivi de dermatologie ».", said)
+        self.assertIn("Ce rendez-vous n'est pas réservable en ligne ; je cherche un autre créneau.", said)
+        self.assertNotIn("Je choisis « Consultation de suivi de dermatologie ».", said)
         paths = [u.split(self.base)[1] for u in visited if u.startswith(self.base)]
         self.assertEqual(paths, ["/results.html", "/booking/motives.html", "/booking/unavailable.html",
-                                 "/booking/motives.html", "/sessions/new/"])
+                                 "/results.html", "/booking/motives2.html", "/sessions/new/"])
+
+    def test_follow_up_request_keeps_the_follow_up_motive(self):
+        result, said, visited, selected = asyncio.run(self.book("Un rendez-vous de suivi chez mon dermatologue lundi"))
+        self.assertEqual(result, (False, LOGIN_REQUIRED))
+        self.assertIn("Je choisis « Consultation de suivi de dermatologie ».", said)
+        self.assertNotIn("Je choisis « Première consultation de dermatologie ».", said)
 
 
 if __name__ == "__main__":
