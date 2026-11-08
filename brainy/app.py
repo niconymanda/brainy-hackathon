@@ -90,7 +90,9 @@ SITE_TIPS = {
                  "paris-75009). The results are then already located: do not touch the location or Secteur filters. "
                  "If you use the search bar, pick a suggestion in the dropdown before pressing Rechercher. "
                  "Each result lists its next slots: click directly a slot that fits the request in the results list; "
-                 "do not open a practitioner's profile that shows no matching slot."),
+                 "do not open a practitioner's profile that shows no matching slot. Only click a slot on a day the "
+                 "request allows. For the visit reason, take the first-visit one (e.g. Première consultation) unless "
+                 "the request says it is a follow-up; never ask which reason."),
 }
 STUCK = re.compile(r"^I'm stuck: repeating '(.*)' has no visible effect\.", re.S)
 
