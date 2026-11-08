@@ -20,12 +20,11 @@ export function cancelSpeech() {
   if ('speechSynthesis' in window) window.speechSynthesis.cancel()
 }
 
-/** The bridge's ElevenLabs endpoint, served next to its WebSocket. */
+/** The bridge's ElevenLabs endpoint, served next to its WebSocket (keeps the WebSocket URL's token). */
 export function ttsUrl(wsUrl: string): string {
   const url = new URL(wsUrl)
   url.protocol = url.protocol === 'wss:' ? 'https:' : 'http:'
   url.pathname = '/tts'
-  url.search = ''
   return url.toString()
 }
 

@@ -125,11 +125,14 @@ class AppTests(unittest.IsolatedAsyncioTestCase):
 
         with patch.object(app_module, "synthesize", fake_synthesize):
             async with httpx.AsyncClient() as client:
-                ok = await client.get("http://127.0.0.1:8799/tts", params={"text": "Je réserve ?"})
-                empty = await client.get("http://127.0.0.1:8799/tts")
+                token = app_module.TTS_TOKEN
+                ok = await client.get("http://127.0.0.1:8799/tts", params={"token": token, "text": "Je réserve ?"})
+                empty = await client.get("http://127.0.0.1:8799/tts", params={"token": token})
+                foreign = await client.get("http://127.0.0.1:8799/tts", params={"text": "Je réserve ?"})
         self.assertEqual((ok.status_code, ok.headers["content-type"], ok.content), (200, "audio/mpeg", b"mp3"))
         self.assertEqual(spoken, ["Je réserve ?"])
         self.assertEqual(empty.status_code, 400)
+        self.assertEqual(foreign.status_code, 403)
 
     async def test_obvious_question_answered_without_user(self):
         script = [Action("ask_user", text="Est-ce que je prends le rendez-vous pour toi ?"),

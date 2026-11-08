@@ -11,11 +11,12 @@ import json
 import mimetypes
 import os
 import re
+import secrets
 import sys
 import threading
 import time
 from datetime import datetime
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, quote, urlsplit
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -34,6 +35,7 @@ from brainy.tts import synthesize
 DIST = Path(__file__).resolve().parents[1] / "frontend" / "dist"
 HOME = Path(os.getenv("BRAINY_HOME", Path.home() / ".brainy"))
 HISTORY_FILE = HOME / "history.json"
+TTS_TOKEN = secrets.token_urlsafe(16)
 
 SITES = {
     "doctolib": "https://www.doctolib.fr",
@@ -348,7 +350,11 @@ def static_response(path):
 
 
 async def tts_response(path):
-    text = parse_qs(urlsplit(path).query).get("text", [""])[0].strip()
+    """Only the Brainy window knows the token, so other pages cannot spend the ElevenLabs quota."""
+    query = parse_qs(urlsplit(path).query)
+    if not secrets.compare_digest(query.get("token", [""])[0], TTS_TOKEN):
+        return Response(403, "Forbidden", Headers([("Content-Type", "text/plain")]), b"bad token")
+    text = query.get("text", [""])[0].strip()
     if not text:
         return Response(400, "Bad Request", Headers([("Content-Type", "text/plain")]), b"missing text")
     try:
@@ -446,7 +452,8 @@ def main():
     if not ready.wait(10):
         print("Server failed to start (port already in use?)", file=sys.stderr)
         return 1
-    url = f"http://127.0.0.1:{args.port}/?app&ws=ws://127.0.0.1:{args.port}/ws"
+    ws_url = quote(f"ws://127.0.0.1:{args.port}/ws?token={TTS_TOKEN}", safe=":/")
+    url = f"http://127.0.0.1:{args.port}/?app&ws={ws_url}"
     if args.no_window:
         print(f"Brainy is running: {url}")
         try:
