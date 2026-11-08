@@ -8,22 +8,6 @@ Many websites still don't work with screen readers. Captchas, date pickers, seat
 
 > *Beaucoup de sites web ne fonctionnent toujours pas avec les lecteurs d'écran. Captchas, sélecteurs de date, plans de sièges, pop-ups et paiements en plusieurs étapes transforment une tâche de cinq minutes en une heure de frustration, ou la rendent impossible sans aide. Avec Brainy, l'utilisateur dit ce qu'il veut, et Brainy s'occupe du site à sa place.*
 
-## Lancer l'appli Brainy (Mac / Windows)
-> *Launch the Brainy desktop app (macOS / Windows)*
-
-Prérequis : Python 3.10+ (`brew install python@3.12`), Node 18+, Google Chrome. Créer `.env` à la racine avec `GLADIA_API_KEY` et `H_API_KEY`.
-
-```sh
-./Brainy.command            # 1er lancement : installe tout, puis ouvre la fenêtre Brainy
-./scripts/make_mac_app.sh   # optionnel : crée ~/Applications/Brainy.app avec l'icône (à mettre dans le Dock)
-./Connexion.command         # une seule fois : ouvre le navigateur de Brainy pour te connecter à Doctolib
-```
-
-Windows : `Brainy.bat` et `Connexion.bat` (même rôle ; `frontend\dist` doit déjà être construit). Le navigateur de l'agent garde ses sessions dans `~/.brainy/chrome-profile` : on se connecte une fois, jamais de mot de passe stocké par Brainy. Raccourci global : **Ctrl+Alt+H**.
-
-Appuie sur **H** (ou le micro), parle, Brainy s'arrête tout seul quand tu te tais. L'agent ouvre Chrome à côté. Au premier lancement, macOS demande l'accès au micro (et éventuellement à « Accessibilité » pour le terminal). Détails du contrat : `frontend/context/05-interface-back.md`.
-
-
 ## How it works
 > *Fonctionnement*
 
@@ -142,136 +126,16 @@ The sections above describe the project vision. Today's terminal implementation 
 > - *Une clé H Company dans `H_API_KEY` pour l'agent/pipeline. `H_MODEL` est facultatif, avec `holo3-1-35b-a3b` par défaut ; `--model` le remplace.*
 > - *Internet et un micro pour les tests vocaux, ou un WAV compatible.*
 > - *Sous Debian/Ubuntu, installez `libportaudio2` avec la commande ci-dessus. Sous macOS, autorisez le micro pour Terminal/l'IDE dans **Réglages Système → Confidentialité et sécurité → Microphone**. Vérifiez aussi les permissions Windows.*
+## Quick Start (Windows)
 
-### 2. Setup
-> *Installation*
+**Requirements:** an H Company API key, a Gladia API key, and an ElevenLabs API key.
 
-Use `devin/voice-to-h-agent` for this PR, or `Devin-works` once the PR is merged there. There is no tracked `.env.example`: create `.env` as below and fill in both values with your editor. If it already exists, edit rather than recreate it. Never commit keys or put secrets in goals or command-line arguments.
-> *Utilisez `devin/voice-to-h-agent` pour cette PR, ou `Devin-works` après sa fusion sur cette branche. Aucun `.env.example` n'est suivi : créez `.env` puis renseignez les deux valeurs dans votre éditeur. S'il existe déjà, modifiez-le sans le recréer. Ne commitez jamais de clés et ne mettez aucun secret dans les objectifs ou arguments.*
-
-**macOS/Linux:** ensure `python3` is Python 3.10+; install PortAudio as above on Linux.
-> ***macOS/Linux :** vérifiez que `python3` est Python 3.10+ ; installez PortAudio comme indiqué sous Linux.*
-
-~~~sh
-git clone https://github.com/niconymanda/brainy-hackathon.git
-cd brainy-hackathon
-git checkout devin/voice-to-h-agent
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install -r requirements.txt
-python -m playwright install chromium
-printf 'GLADIA_API_KEY=\nH_API_KEY=\n' > .env
-~~~
-
-**Windows PowerShell:** ensure `py` selects Python 3.10+. If activation is blocked by execution policy, use `.\.venv\Scripts\python.exe` instead of `python` for installation and tests without activating.
-> ***Windows PowerShell :** vérifiez que `py` utilise Python 3.10+. Si la stratégie d'exécution bloque l'activation, remplacez `python` par `.\.venv\Scripts\python.exe` pour l'installation et les tests, sans activation.*
-
-~~~powershell
-git clone https://github.com/niconymanda/brainy-hackathon.git
-Set-Location brainy-hackathon
-git checkout devin/voice-to-h-agent
-py -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install -r requirements.txt
-python -m playwright install chromium
-New-Item -Path .env -ItemType File
-Add-Content -Path .env -Value 'GLADIA_API_KEY='
-Add-Content -Path .env -Value 'H_API_KEY='
-~~~
-
-### 3. Test in this order
-> *Tester dans cet ordre*
-
-**A. Offline unit tests.** No real API key, microphone or browser session is needed. One known test, `test_empty_audio_auto_detection`, currently fails because the client unconditionally includes post-processing settings; this is not an installation error. Investigate additional failures.
-> ***A. Tests unitaires hors ligne.** Aucune vraie clé, aucun micro ni session navigateur nécessaires. Le test connu `test_empty_audio_auto_detection` échoue car le client inclut systématiquement les réglages de post-traitement ; ce n'est pas une erreur d'installation. Examinez tout autre échec.*
-
-~~~sh
-python -m unittest discover tests
-~~~
-
-**B. List microphones.** No key is required. Pick a listed input index/name with `--device` if the default microphone is wrong.
-> ***B. Lister les micros.** Aucune clé nécessaire. Sélectionnez un indice/nom d'entrée avec `--device` si le micro par défaut ne convient pas.*
-
-~~~sh
-python -m brainy.stt --list-devices
-~~~
-
-**C. Speech only.** Speak and watch partial/final transcripts. The first command uses the default mic and automatic language detection; the second enables French/English code switching, a summary and explicit silence/utterance settings. Append `--device INDEX` with a listed index to select another mic.
-> ***C. Voix seule.** Parlez et observez les transcriptions partielles/définitives. La première commande utilise le micro par défaut et la détection automatique ; la seconde active français/anglais, résumé et réglages de silence/durée. Ajoutez `--device INDEX` avec un indice de la liste pour changer de micro.*
-
-~~~sh
-python -m brainy.stt
-python -m brainy.stt --language fr --language en --summary bullet_points --endpointing 0.5 --max-utterance 9
-~~~
-
-Without a microphone, supply your own uncompressed **16 kHz, mono, 16-bit PCM WAV**. It still streams to Gladia and needs its key.
-> *Sans micro, fournissez votre WAV PCM non compressé **16 kHz, mono, 16 bits**. Il est toujours envoyé à Gladia et nécessite sa clé.*
-
-~~~sh
-python -m brainy.stt --file sample.wav --summary concise
-~~~
-
-**D. Prompt only.** Summarization is enabled; the prompt prints without calling the agent or requiring an H key. Missing/failed/empty summaries fall back to joined final utterances. Empty input produces an error. The current template contains the summary, not a separate verbatim transcript.
-> ***D. Prompt seul.** Le résumé est activé ; le prompt s'affiche sans appel à l'agent ni clé H. Un résumé absent/en erreur/vide est remplacé par les énoncés définitifs joints. Une entrée vide produit une erreur. Le modèle actuel contient le résumé, sans transcription séparée mot pour mot.*
-
-~~~sh
-python -m brainy.stt --language fr --language en --h-prompt
-~~~
-
-**E. Agent only.** No microphone or Gladia key is used. The browser opens visibly; steps/results and questions print in the terminal. Type replies; confirmation gates accept only `yes` or `oui`. Press Enter when prompted to close the browser, or use `--headless` to skip that closing wait.
-> ***E. Agent seul.** Aucun micro ni clé Gladia. Le navigateur s'ouvre et étapes/résultats/questions s'affichent dans le terminal. Répondez au clavier ; les confirmations acceptent seulement `yes` ou `oui`. Fermez avec Entrée à la demande, ou utilisez `--headless` pour éviter cette attente.*
-
-~~~sh
-python -m brainy.agent "Describe this page and stop without submitting anything." --url https://example.org
-python -m brainy.agent "Fill Customer name with Test User, choose Large, then stop without submitting." --url https://httpbin.org/forms/post --fill "Customer name=Test User" --choose Large
-~~~
-
-Interleave `--choose TEXT` and `--fill "FIELD=TEXT"` in command-line order. Only the first pending item is tried; if absent, Holo continues without discarding it. Choices use normalized exact labels, with `|` for alternatives. Fields match normalized label/placeholder/aria-label/name substrings; secret-like fields are refused. Site labels may change; these examples do not guarantee successful automation.
-> *Alternez `--choose TEXTE` et `--fill "CHAMP=TEXTE"` dans l'ordre souhaité. Seul le premier élément est essayé ; s'il manque, Holo continue sans le supprimer. Les choix utilisent des libellés exacts normalisés, avec `|` pour les alternatives. Les champs correspondent à des sous-chaînes normalisées de libellé/placeholder/aria-label/nom ; les champs sensibles sont refusés. Les libellés peuvent changer : ces exemples ne garantissent pas le succès.*
-
-**F. End-to-end: speak → H web agent.** Both keys are checked before recording. Run this command and say, for example: “Find Paris to Lyon trains for next Friday morning, one adult, second class. Show options and stop before booking or paying.”
-> ***F. De bout en bout : parler → agent web H.** Les deux clés sont vérifiées avant l'enregistrement. Lancez la commande puis dites par exemple : « Cherche des trains Paris–Lyon vendredi prochain matin, un adulte, seconde classe. Présente les options et arrête-toi avant de réserver ou payer. »*
-
-~~~sh
-python -m brainy --url https://www.sncf-connect.com
-~~~
-
-Press **Ctrl+C once** to stop recording and wait for final transcripts/summary (up to about two minutes per post-processing wait stage). Brainy builds and prints the prompt, then opens the browser with it as the local Playwright/Holo agent's goal. Follow-up questions and confirmations are typed in the terminal, not spoken. Missing summaries use the final transcript; empty input exits without launching the browser.
-> *Appuyez **une fois sur Ctrl+C** pour arrêter l'enregistrement et attendre transcription/résumé (environ deux minutes maximum par étape d'attente). Brainy construit et affiche le prompt, puis ouvre le navigateur avec celui-ci comme objectif de l'agent local Playwright/Holo. Questions et confirmations se font au clavier, pas à la voix. Sans résumé, la transcription est utilisée ; une entrée vide quitte sans lancer le navigateur.*
-
-While recording or waiting for final results, **a second Ctrl+C** quits without remaining results (exit 130) and skips the agent. Once the agent phase starts, **one Ctrl+C** quits that phase (exit 130). These recording-stop rules also apply to speech-only and prompt-only commands.
-> *Pendant l'enregistrement ou l'attente des résultats, **un deuxième Ctrl+C** quitte sans les résultats restants (code 130) et ne lance pas l'agent. Dès la phase agent, **un seul Ctrl+C** la quitte (code 130). Ces règles d'arrêt de l'enregistrement s'appliquent aussi aux commandes voix seule et prompt seul.*
-
-### 4. Main options
-> *Options principales*
-
-- **All three CLIs:** `--help` lists every argument.
-- **Speech/pipeline:** repeat `--language CODE`; use either `--device INDEX_OR_NAME` or `--file PATH.wav`; `--summary general|bullet_points|concise`; `--endpointing SECONDS` (0.01–10 seconds of silence); `--max-utterance SECONDS` (5–60 seconds of continuous speech, not silence).
-- **Speech only:** `--list-devices`, `--h-prompt`.
-- **Agent/pipeline:** `--url URL`, `--model MODEL`, `--headless`, `--channel chrome` or `--channel msedge` (otherwise bundled Chromium), `--profile-dir PATH`, `--debug`, repeatable ordered `--choose TEXT` / `--fill FIELD=TEXT`. Use a dedicated private profile, not one already open elsewhere.
-- **Agent only:** required positional `goal`; the pipeline obtains its goal from speech.
-> - ***Les trois CLI :** `--help` liste les arguments.*
-> - ***Voix/pipeline :** `--language CODE` répétable ; soit `--device INDICE_OU_NOM`, soit `--file CHEMIN.wav` ; `--summary general|bullet_points|concise` ; `--endpointing SECONDES` (0,01–10 secondes de silence) ; `--max-utterance SECONDES` (5–60 secondes de parole continue, pas de silence).*
-> - ***Voix seule :** `--list-devices`, `--h-prompt`.*
-> - ***Agent/pipeline :** `--url URL`, `--model MODÈLE`, `--headless`, `--channel chrome` ou `--channel msedge` (sinon Chromium fourni), `--profile-dir CHEMIN`, `--debug`, `--choose TEXTE` / `--fill CHAMP=TEXTE` répétables dans l'ordre. Utilisez un profil privé dédié, pas déjà ouvert ailleurs.*
-> - ***Agent seul :** objectif positionnel `goal` obligatoire ; le pipeline le déduit de la parole.*
-
-Pipeline and prompt-only mode enable bullet-point summaries unless overridden. Standalone STT help says summaries are disabled by default, but the current client still hardcodes post-processing and a 9-second utterance cap; this explains the known test failure. Explicit options override the corresponding settings.
-> *Le pipeline et le mode prompt seul activent le résumé en points sauf option contraire. L'aide STT annonce les résumés désactivés par défaut, mais le client impose encore post-traitement et limite d'énoncé de 9 secondes ; cela explique le test en échec. Les options explicites remplacent les réglages correspondants.*
-
-### 5. Troubleshooting / safe testing
-> *Dépannage / tests prudents*
-
-- **`ModuleNotFoundError`:** activate the venv and rerun `python -m pip install -r requirements.txt` with its interpreter.
-- **No microphone text:** rerun `--list-devices`, select `--device`, check permissions/PortAudio, then try a compatible `--file` to isolate microphone issues from API/network failures.
-- **Missing-key error:** fill the required values in repository-root `.env` or export them. Pipeline needs both keys before recording; STT only Gladia; agent only H.
-- **Browser launch failure:** rerun `python -m playwright install chromium`; with `--channel`, ensure that browser is installed. On Linux, follow Playwright's printed missing-system-library instructions.
-- **Blocked site / stuck agent:** CAPTCHA/anti-bot bypass is not guaranteed. Try a smaller task or stop. Inspect `--debug` output before sharing: private page content may remain.
-> - ***`ModuleNotFoundError` :** activez le venv et relancez `python -m pip install -r requirements.txt` avec son interpréteur.*
-> - ***Aucun texte du micro :** relancez `--list-devices`, sélectionnez `--device`, vérifiez permissions/PortAudio, puis essayez un `--file` compatible pour isoler les problèmes du micro de ceux de l'API/réseau.*
-> - ***Clé manquante :** renseignez les valeurs dans `.env` à la racine ou dans l'environnement. Pipeline : deux clés avant la parole ; STT : Gladia seule ; agent : H seule.*
-> - ***Navigateur impossible à lancer :** relancez `python -m playwright install chromium` ; avec `--channel`, vérifiez son installation. Sous Linux, suivez les instructions Playwright de bibliothèques système manquantes.*
-> - ***Site bloqué / agent coincé :** aucun contournement garanti des CAPTCHA/protections anti-bot. Essayez une tâche plus petite ou arrêtez. Vérifiez `--debug` avant partage : du contenu privé peut rester.*
-
-Supervise tests and use fictitious data, never real purchases/payments or sensitive accounts. Keyword confirmation gates and prompt instructions are safeguards, **not guarantees** that all irreversible actions are detected. Audio goes to Gladia; screenshots/page context and non-secret follow-up answers go to H Company. Password masking does not remove all private content. Profiles, stdout and debug logs can also contain private data.
-> *Surveillez les tests et utilisez des données fictives, jamais de vrais achats/paiements ni comptes sensibles. Confirmations par mots-clés et consignes du prompt sont des protections, **pas des garanties** de détection de toute action irréversible. L'audio va à Gladia ; captures/contexte de page et réponses non sensibles vont à H Company. Le masquage des mots de passe ne retire pas tout contenu privé. Profils, sortie standard et logs peuvent aussi contenir des données privées.*
+1. Install dependencies (do not install `webview` separately):
+```powershell
+   pip install -r requirements.txt
+```
+2. Add your three API keys to a `.env` file in the project root.
+3. Launch the app:
+```powershell
+   .\Brainy.bat
+```
