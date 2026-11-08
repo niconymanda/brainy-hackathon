@@ -398,6 +398,30 @@ class HTTPTests(unittest.IsolatedAsyncioTestCase):
             with patch("brainy.agent.holo.asyncio.sleep", AsyncMock()):
                 self.assertEqual((await HoloClient("test-key", http=http).decide(b"png", "test", [])).action, "done")
 
+    async def test_http_waits_out_rate_limit(self):
+        codes = iter([429, 429, 429, 429, 200])
+
+        def respond(_):
+            return httpx.Response(next(codes), json={"choices": [{"message": {"content": '{"action":"done"}'}}]})
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as http:
+            with patch("brainy.agent.holo.asyncio.sleep", AsyncMock()):
+                self.assertEqual((await HoloClient("test-key", http=http).decide(b"png", "test", [])).action, "done")
+
+    async def test_throttle_stays_under_rpm(self):
+        clock = [0.0]
+
+        async def sleep(seconds):
+            clock[0] += seconds
+
+        client = HoloClient("test-key")
+        client.rpm = 2
+        with patch("brainy.agent.holo.time.monotonic", lambda: clock[0]), \
+                patch("brainy.agent.holo.asyncio.sleep", sleep):
+            for _ in range(3):
+                await client._throttle()
+        self.assertGreaterEqual(clock[0], 60)
+
     async def test_http_error(self):
         async with httpx.AsyncClient(transport=httpx.MockTransport(lambda _: httpx.Response(401))) as http:
             with self.assertRaises(httpx.HTTPStatusError):

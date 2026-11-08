@@ -1,8 +1,11 @@
 import asyncio
 import base64
 import json
+import os
 import re
 import sys
+import time
+from collections import deque
 from dataclasses import dataclass
 
 import httpx
@@ -55,6 +58,19 @@ class HoloClient:
         self.api_key = api_key
         self.model = model
         self.http = http
+        # H API keys are rate limited per minute (tier_1: 30); staying under it beats getting a 429.
+        self.rpm = int(os.getenv("H_RPM", "30"))
+        self._calls = deque()
+
+    async def _throttle(self):
+        while True:
+            now = time.monotonic()
+            while self._calls and now - self._calls[0] >= 60:
+                self._calls.popleft()
+            if len(self._calls) < self.rpm:
+                self._calls.append(now)
+                return
+            await asyncio.sleep(60.05 - (now - self._calls[0]))
 
     async def _chat(self, screenshot, prompt, think=True):
         data = {"model": self.model, "messages": [{"role": "user", "content": [
@@ -71,17 +87,22 @@ class HoloClient:
         if self.http is None:
             # One client for the whole task: no new TLS handshake per model call.
             self.http = httpx.AsyncClient(timeout=90)
-        for attempt in range(3):
+        for attempt in range(8):
+            await self._throttle()
             try:
                 return await send(self.http)
             except (httpx.TransportError, httpx.HTTPStatusError) as exc:
                 status = exc.response.status_code if isinstance(exc, httpx.HTTPStatusError) else None
-                if attempt == 2 or status in {401, 403}:
+                if attempt == 7 or status in {401, 403} or (status != 429 and attempt >= 2):
                     if status is not None:
                         print(f"H API {status}: {exc.response.text[:300]}", file=sys.stderr)
                     raise
                 # A busy or briefly unreachable API must not end a booking that is almost done.
-                await asyncio.sleep(1 + attempt)
+                if status == 429:
+                    retry_after = exc.response.headers.get("retry-after", "")
+                    await asyncio.sleep(float(retry_after) if retry_after.replace(".", "", 1).isdigit() else 5)
+                else:
+                    await asyncio.sleep(1 + attempt)
 
     async def decide(self, screenshot, goal, history, page_context=None):
         prompt = (
