@@ -1,11 +1,12 @@
 import asyncio
+
 import base64
 import json
 import re
+import sys
 from dataclasses import dataclass
 
 import httpx
-
 
 @dataclass(frozen=True)
 class Action:
@@ -14,7 +15,6 @@ class Action:
     text: str = ""
     url: str = ""
     narration: str = ""
-
 
 def parse_action(content):
     decoder = json.JSONDecoder()
@@ -36,7 +36,6 @@ def parse_action(content):
         return action
     raise ValueError("No valid action JSON")
 
-
 def parse_click(content, viewport):
     match = re.search(r"Click\(\s*(\d+(?:\.\d+)?)\s*,\s*(\d+(?:\.\d+)?)\s*\)", content)
     if not match:
@@ -47,10 +46,8 @@ def parse_click(content, viewport):
         raise ValueError("Click outside viewport")
     return min(width - 1, x * width / 1000), min(height - 1, y * height / 1000)
 
-
 def _data_url(image):
     return "data:image/jpeg;base64," if image[:2] == b"\xff\xd8" else "data:image/png;base64,"
-
 
 class HoloClient:
     def __init__(self, api_key, model="holo4-35b-a3b", http=None):
@@ -80,7 +77,9 @@ class HoloClient:
                 return await send(self.http)
             except (httpx.TransportError, httpx.HTTPStatusError) as exc:
                 status = exc.response.status_code if isinstance(exc, httpx.HTTPStatusError) else None
-                if attempt == 2 or (status is not None and status != 429 and status < 500):
+                if attempt == 2 or status in {401, 403}:
+                    if status is not None:
+                        print(f"H API {status}: {exc.response.text[:300]}", file=sys.stderr)
                     raise
                 # A busy or briefly unreachable API must not end a booking that is almost done.
                 await asyncio.sleep(1 + attempt)
