@@ -470,9 +470,10 @@ class Session:
                     ok, result = cancelled
                     if ok:
                         status, tone = "Terminé", "paid"
-                    self.emit(type="done", result=result, ok=ok)
-                    return
-                self.emit(type="agent_step", narration="Je continue sur la page.", action="auto")
+                else:
+                    ok, result = False, "Je n'ai pas trouvé l'annulation sur Doctolib. Vérifie que ton compte est connecté."
+                self.emit(type="done", result=result, ok=ok)
+                return
             route = doctolib_url(request) if not os.getenv("BRAINY_NO_ROUTE") else None
             medical_booking = bool(re.search(
                 r"\b(?:rdv|rendez[\s-]?vous|doctolib|m[ée]decin|docteur)\b", request, re.I))
