@@ -3,6 +3,7 @@ import asyncio
 import json
 import tempfile
 import unittest
+from datetime import datetime
 from pathlib import Path
 from unittest.mock import patch
 
@@ -69,6 +70,7 @@ class AppTests(unittest.IsolatedAsyncioTestCase):
         self.browser = FakeBrowser()
         patches = [
             patch.object(app_module, "HISTORY_FILE", Path(self.tmp.name) / "history.json"),
+            patch.object(app_module, "PROFILE_FILE", Path(self.tmp.name) / "profil.txt"),
             patch.object(app_module, "HoloClient", FakeHolo),
             patch.object(app_module.BrainyApp, "get_browser", self.fake_browser),
         ]
@@ -107,6 +109,7 @@ class AppTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("agent_step", kinds)
             self.assertEqual(self.browser.visited, ["https://www.doctolib.fr"])
             self.assertIn("profile data", FakeHolo.goal)
+            self.assertIn("Never invent personal data", FakeHolo.goal)
             self.assertEqual(self.browser.clicks, 1)
             await ws.send(json.dumps({"type": "confirm", "answer": "oui"}))
             events = await self.recv_until(ws, "history")
@@ -154,7 +157,7 @@ class AppTests(unittest.IsolatedAsyncioTestCase):
                 on_transcript(type("T", (), {"text": "Pour Léo", "is_final": True})())
                 await stop.wait()
 
-        script = [Action("ask_user", text="Pour Léo ou pour Inès ?"), Action("done", text="Fini.")]
+        script = [Action("ask_user", text="Quelle est ta ville de naissance ?"), Action("done", text="Fini.")]
         with patch.object(FakeHolo, "script", script), patch.object(app_module, "SILENCE_SECONDS", 0.1), \
                 patch("brainy.stt.client.GladiaClient", FakeGladia), \
                 patch("brainy.stt.audio.microphone_audio", lambda device: None):
@@ -169,16 +172,29 @@ class AppTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(events[-1]["ok"])
         self.assertIn("Pour Léo", json.dumps(FakeHolo.history, ensure_ascii=False))
 
-    async def test_question_after_budget_goes_to_user(self):
-        script = [Action("scroll", text="down"), Action("ask_user", text="Est-ce que je continue ou pas ?"),
+    async def test_agent_settles_choices_itself(self):
+        script = [Action("scroll", text="down"), Action("ask_user", text="Pour Léo ou pour Inès ?"),
                   Action("done", text="Fini.")]
         with patch.object(FakeHolo, "script", script), \
                 patch("brainy.agent.loop.WebAgent._over_budget", lambda *a: True):
             async with connect("ws://127.0.0.1:8799/ws") as ws:
                 await ws.recv()
                 await ws.send(json.dumps({"type": "user_text", "text": "Un dermato"}))
-                events = await self.recv_until(ws, "needs_user")
-        self.assertEqual(events[-1]["question"], "Est-ce que je continue ou pas ?")
+                events = await self.recv_until(ws, "done")
+        self.assertNotIn("needs_user", [e["type"] for e in events])
+        self.assertIn("auto", [e.get("action") for e in events])
+
+    async def test_open_answer_starting_with_non_continues(self):
+        script = [Action("ask_user", text="Quelle est ta date de naissance ?"), Action("done", text="Fini.")]
+        with patch.object(FakeHolo, "script", script):
+            async with connect("ws://127.0.0.1:8799/ws") as ws:
+                await ws.recv()
+                await ws.send(json.dumps({"type": "user_text", "text": "Un dermato"}))
+                await self.recv_until(ws, "needs_user")
+                await ws.send(json.dumps({"type": "user_text", "text": "Non, plutôt lundi"}))
+                events = await self.recv_until(ws, "done")
+        self.assertTrue(events[-1]["ok"])
+        self.assertIn("User answered: Non, plutôt lundi", FakeHolo.history)
 
     async def test_refused_confirmation_clicks_nothing(self):
         async with connect("ws://127.0.0.1:8799/ws") as ws:
@@ -212,10 +228,72 @@ class AppTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(kinds[0], "listening")
                 self.assertEqual(events[-2], {"type": "transcript", "text": "Un dermato samedi", "final": True})
 
+    async def test_booking_without_specialty_asks_before_starting_agent(self):
+        async with connect("ws://127.0.0.1:8799/ws") as ws:
+            await ws.recv()
+            await ws.send(json.dumps({"type": "user_text", "text": "Réserve-moi un rendez-vous dans le 9e"}))
+            events = await self.recv_until(ws, "needs_user")
+        question = next(event["question"] for event in events if event["type"] == "needs_user")
+        self.assertEqual(question, "Quel type de médecin ? Par exemple dermatologue ou dentiste.")
+        self.assertEqual(self.browser.visited, [])
+
+    async def test_microphone_capture_is_buffered_during_gladia_connect(self):
+        chunks = []
+        produced_before_consume = []
+        received = []
+
+        async def microphone(device):
+            for chunk in (b"first", b"second", b"third"):
+                chunks.append(chunk)
+                yield chunk
+
+        class SlowGladia:
+            def __init__(self, *args):
+                pass
+
+            async def transcribe(self, audio, callback, stop):
+                await asyncio.sleep(0.3)
+                produced_before_consume.extend(chunks)
+                async for chunk in audio:
+                    received.append(chunk)
+
+        with patch("brainy.stt.client.GladiaClient", SlowGladia), \
+                patch("brainy.stt.audio.microphone_audio", microphone), \
+                patch.dict("os.environ", {"GLADIA_API_KEY": "test-key"}):
+            async with connect("ws://127.0.0.1:8799/ws") as ws:
+                await ws.recv()
+                await ws.send(json.dumps({"type": "start_listening"}))
+                await self.recv_until(ws, "error")
+
+        self.assertEqual(produced_before_consume, [b"first", b"second", b"third"])
+        self.assertEqual(chunks, [b"first", b"second", b"third"])
+        self.assertEqual(received, chunks)
+
     async def test_static_fallback(self):
         response = app_module.static_response("/../../etc/passwd")
         self.assertIn(response.status_code, (200, 500))
         self.assertNotIn(b"root:", response.body)
+
+
+class BrowserConcurrencyTests(unittest.IsolatedAsyncioTestCase):
+    async def test_concurrent_browser_start_reuses_one_context(self):
+        launches = []
+
+        class SlowBrowser:
+            def __init__(self, **kwargs):
+                launches.append(kwargs)
+                self._context_closed = False
+
+            async def __aenter__(self):
+                await asyncio.sleep(0.05)
+                return self
+
+        app = app_module.BrainyApp(argparse.Namespace(channel="chrome"))
+        with patch.object(app_module, "Browser", SlowBrowser):
+            first, second = await asyncio.gather(app.get_browser(), app.get_browser())
+
+        self.assertIs(first, second)
+        self.assertEqual(len(launches), 1)
 
 
 class HelperTests(unittest.TestCase):
@@ -223,14 +301,51 @@ class HelperTests(unittest.TestCase):
         self.assertEqual(app_module.start_url_for("Prends-moi un RDV sur Doctolib"), "https://www.doctolib.fr")
         self.assertIsNone(app_module.start_url_for("Réserve un restaurant"))
 
+    async def test_profile_reaches_the_goal(self):
+        (Path(self.tmp.name) / "profil.txt").write_text(
+            app_module.PROFILE_TEMPLATE.replace("Ville de naissance :", "Ville de naissance : Lyon"), encoding="utf-8")
+        async with connect("ws://127.0.0.1:8799/ws") as ws:
+            await ws.recv()
+            await ws.send(json.dumps({"type": "user_text", "text": "Un dermato sur Doctolib samedi"}))
+            await self.recv_until(ws, "confirm_request")
+            self.assertIn("never ask for it):\n- Ville de naissance : Lyon", FakeHolo.goal)
+            self.assertNotIn("Prénom", FakeHolo.goal)
+            self.assertNotIn("carte bancaire", FakeHolo.goal)
+            await ws.send(json.dumps({"type": "confirm", "answer": "non"}))
+            await self.recv_until(ws, "done")
+
+    def test_goal_carries_request_and_date(self):
+        goal = app_module.brainy_goal("Un dermato mardi vers 13h", datetime(2026, 11, 7))
+        self.assertIn("Un dermato mardi vers 13h", goal)
+        self.assertIn("Today is samedi 7 novembre 2026", goal)
+        self.assertIn("never use done to ask", goal)
+        self.assertNotIn("complete or impossible", goal)
+        self.assertNotIn("list the questions", goal)
+
     def test_obvious_questions(self):
         for q in ("Est-ce que tu veux bien que je prenne le rendez-vous pour toi ?",
                   "Je confirme la sélection de la catégorie dermatologue ?",
-                  "Ton nom de naissance est-il Esposito-Farès ?", "Est-ce que je continue ou pas ?"):
+                  "Ton nom de naissance est-il Esposito-Farès ?", "Est-ce que je continue ou pas ?",
+                  "Je cherche un dermatologue. Je vise un créneau vers 13h. "
+                  "Veux-tu que je prenne la première option disponible ?"):
             self.assertTrue(app_module.obvious_question(q), q)
+        request = "Un dermatologue un mardi ou un mercredi vers 13h"
+        self.assertTrue(app_module.obvious_question(
+            "Je vise un mardi ou un mercredi. Veux-tu que je prenne la première option ?", request))
+        self.assertTrue(app_module.obvious_question("Est-ce que je continue ? Je vais cliquer sur Suivant."))
+        self.assertFalse(app_module.obvious_question(
+            "Il y a Léo ou Inès. Est-ce que je réserve pour Léo ?", request))
+        self.assertFalse(app_module.obvious_question("Est-ce que je réserve pour Léo ou Léon ?", "RDV pour Léonie"))
+        self.assertFalse(app_module.obvious_question("Est-ce que je réserve pour Léo, ou Inès ?"))
+        self.assertFalse(app_module.obvious_question("Quel jour ? Est-ce que je continue ?"))
+        self.assertTrue(app_module.obvious_question("Je vise mardi ou mercredi. Est-ce que je continue ?",
+                                                    "libre tous les mardis et mercredis"))
+        self.assertTrue(app_module.obvious_question("Standard ou express. Est-ce que je continue ?",
+                                                    "billet standard ou express"))
         for q in ("Quel âge a le patient ?", "Peux-tu entrer ton mot de passe ?",
                   "Pour Léo ou pour Inès ?", "Est-ce que je réserve pour Léo ou pour Inès ?",
                   "Est-ce que je choisis un billet remboursable ou non remboursable ?",
+                  "Je cherche un mardi ou un mercredi. Est-ce que je prends le Dr Martin ou le Dr Durand ?",
                   app_module.french_question(app_module.OUT_OF_BUDGET)):
             self.assertFalse(app_module.obvious_question(q), q)
 

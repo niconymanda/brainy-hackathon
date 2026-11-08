@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="fr"><head><meta charset="utf-8"><title>Prise de rendez-vous</title>
+<style>body{font-family:sans-serif;margin:20px} button{display:block;margin:10px 0;width:240px;height:36px}</style></head>
+<body>
+<button id="back" onclick="location.href='results.html'">Étape précédente</button>
+<h1>Votre rendez-vous</h1>
+<p id="when"></p>
+<p>Connectez-vous pour continuer.</p>
+<button id="final" disabled>Confirmer le rendez-vous</button>
+<script>
+  const slot = new URLSearchParams(location.search).get('slot') || '';
+  document.getElementById('when').innerText = slot.startsWith('2026-11-09') ? 'lundi 9 novembre à 11:15' : 'mardi 10 novembre à 11:15';
+</script>
+</body></html>
