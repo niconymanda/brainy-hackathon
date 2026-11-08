@@ -1,5 +1,8 @@
 import hashlib
 import re
+import asyncio
+
+from playwright.async_api import Error
 
 from .events import AgentError, AgentStep, ConfirmRequest, Done, NeedsUser
 from .debug import debug_log
@@ -19,6 +22,11 @@ class WebAgent:
         self.pending_actions = (list(pending_actions) if pending_actions is not None else
                                 [("choose", text) for text in choices or []])
 
+    async def _locate(self, screenshot, target):
+        if self.debug:
+            debug_log("Thinking (Holo grounding)...")
+        return await self.client.locate(screenshot, target, self.browser.viewport)
+
     async def run(self, goal, start_url=None):
         history = []
         queue = self.pending_actions.copy()
@@ -31,6 +39,53 @@ class WebAgent:
             if start_url:
                 await self.browser.goto(start_url)
             for _ in range(self.max_steps):
+                history.extend(await self.browser.take_recovery_notes())
+                if queue and queue[0][0] == "fill":
+                    _, field, text = queue[0]
+                    step = "type"
+                    try:
+                        element = await asyncio.wait_for(self.browser.find_fill(field), timeout=3)
+                        value = await asyncio.wait_for(self.browser.fill_field(element, text), timeout=5) if element is not None else None
+                    except SecretFieldError:
+                        warning = "Skipped secret-like fill field; complete it manually."
+                        yield AgentStep(warning, "fill")
+                        history.append(warning)
+                        queue.pop(0)
+                        continue
+                    except (Error, asyncio.TimeoutError):
+                        value = None
+                        history.append("Direct fill unavailable during page loading; inspect the current page.")
+                    if value is not None:
+                        yield AgentStep(f"Typing {text}.", "type")
+                        history.append(f"Filled {field!r} directly; field now contains {value!r}. "
+                                       "Choose a matching autocomplete suggestion before searching.")
+                        queue.pop(0)
+                        pending = last_key = None
+                        unchanged_count = 0
+                        continue
+                if queue and queue[0][0] == "choose" and not RISKY.search(queue[0][1]):
+                    step = "select_text"
+                    selected = False
+                    for text in queue[0][1].split("|"):
+                        try:
+                            element = await asyncio.wait_for(self.browser.find_choice(text.strip()), timeout=3)
+                        except (Error, asyncio.TimeoutError):
+                            element = None
+                        if element is not None:
+                            try:
+                                result = await asyncio.wait_for(self.browser.select_choice(element, text.strip()), timeout=5)
+                            except (Error, asyncio.TimeoutError):
+                                result = None
+                            if result is not None:
+                                yield AgentStep(f"Selecting {text.strip()}.", "select_text")
+                                history.extend([f"Selected {text.strip()} directly", result])
+                                queue.pop(0)
+                                pending = last_key = None
+                                unchanged_count = 0
+                                selected = True
+                                break
+                    if selected:
+                        continue
                 step = "screenshot"
                 screenshot = await self.browser.screenshot()
                 step = "page context"
@@ -52,43 +107,12 @@ class WebAgent:
                         history.append(f"Your last {key[0]} on '{target}' had no visible effect; do not repeat it, "
                                        "try a different approach (e.g. results may already be shown, scroll, "
                                        "choose a suggestion first, or ask the user).")
-                if queue and queue[0][0] == "fill":
-                    _, field, text = queue[0]
-                    step = "type"
-                    try:
-                        element = await self.browser.find_fill(field)
-                        value = await self.browser.fill_field(element, text) if element is not None else None
-                    except SecretFieldError:
-                        warning = "Skipped secret-like fill field; complete it manually."
-                        yield AgentStep(warning, "fill")
-                        history.append(warning)
-                        queue.pop(0)
-                        continue
-                    if value is not None:
-                        yield AgentStep(f"Typing {text}.", "type")
-                        history.append(f"Filled {field!r} directly; field now contains {value!r}. "
-                                       "Choose a matching autocomplete suggestion before searching.")
-                        queue.pop(0)
-                        pending = (("type", normalize_choice(field)), signature, field)
-                        continue
-                if queue and queue[0][0] == "choose" and not RISKY.search(queue[0][1]):
-                    step = "select_text"
-                    selected = False
-                    for text in queue[0][1].split("|"):
-                        element = await self.browser.find_choice(text.strip())
-                        if element is not None:
-                            result = await self.browser.select_choice(element, text.strip())
-                            if result is not None:
-                                yield AgentStep(f"Selecting {text.strip()}.", "select_text")
-                                history.extend([f"Selected {text.strip()} directly", result])
-                                queue.pop(0)
-                                pending = (("select_text", " ".join(text.casefold().split())), signature, text)
-                                selected = True
-                                break
-                    if selected:
-                        continue
                 step = "model call"
+                if self.debug:
+                    debug_log("Thinking (Holo)...")
                 action = await self.client.decide(screenshot, goal, history, page_context=page_context)
+                if self.debug:
+                    debug_log(f"Holo action: {action.action}")
                 target = action.text if action.action == "select_text" else action.target
                 key = (action.action, " ".join(target.casefold().split()))
                 yield AgentStep(action.narration, action.action)
@@ -96,7 +120,7 @@ class WebAgent:
                     yield Done(action.text or action.narration)
                     return
                 question = None
-                if key == last_key and unchanged_count >= 2:
+                if key == last_key and unchanged_count >= 2 and action.action != "scroll":
                     question = (f"I'm stuck: repeating '{target}' has no visible effect. "
                                 "Should I try a different approach, or can you do it manually and reply ok?")
                 elif action.action == "ask_user":
@@ -133,7 +157,7 @@ class WebAgent:
                     result = await self.browser.select_text(action.text)
                     if result is None:
                         step = "model call"
-                        x, y = await self.client.locate(screenshot, action.text, self.browser.viewport)
+                        x, y = await self._locate(screenshot, action.text)
                         step = "click"
                         await self.browser.click(x, y)
                         result = f"Clicked {action.text!r} using grounding; inspect next screenshot for selection state."
@@ -145,7 +169,7 @@ class WebAgent:
                             break
                 elif action.action in {"click", "confirm", "type"}:
                     step = "model call"
-                    x, y = await self.client.locate(screenshot, action.target, self.browser.viewport)
+                    x, y = await self._locate(screenshot, action.target)
                     step = "click"
                     await self.browser.click(x, y)
                     if action.action == "type":
@@ -156,7 +180,7 @@ class WebAgent:
                             step = "screenshot"
                             screenshot = await self.browser.screenshot()
                             step = "model call"
-                            x, y = await self.client.locate(screenshot, action.target, self.browser.viewport)
+                            x, y = await self._locate(screenshot, action.target)
                             step = "click"
                             await self.browser.click(x, y)
                             step = "type"
@@ -170,7 +194,9 @@ class WebAgent:
                             queue.pop(0)
                 elif action.action == "scroll":
                     step = "scroll"
-                    await self.browser.scroll(action.text)
+                    result = await self.browser.scroll(action.text)
+                    if isinstance(result, str):
+                        history.append(result)
                 history.append({"action": action.action, "target": target,
                                 "result": "executed; inspect current screenshot to verify"})
                 pending = (key, signature, target)

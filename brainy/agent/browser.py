@@ -1,9 +1,10 @@
 import asyncio
 import re
 import unicodedata
+from uuid import uuid4
 from urllib.parse import urlsplit
 
-from playwright.async_api import Error, async_playwright
+from playwright.async_api import Error, TimeoutError as PlaywrightTimeoutError, async_playwright
 
 from .debug import debug_log
 
@@ -23,6 +24,58 @@ def is_secret_field(text):
 def normalize_choice(text):
     text = unicodedata.normalize("NFKD", text.casefold())
     return " ".join("".join(c for c in text if not unicodedata.combining(c)).split())
+
+
+DIRECT_LOOKUP = r"""({mode, target, marker}) => {
+    const normalize = text => text.normalize('NFKD').toLowerCase().replace(/ß/g, 'ss')
+        .replace(/ς/g, 'σ').replace(/\p{M}/gu, '').replace(/\s+/g, ' ').trim();
+    const visible = el => {
+        if (!el || !el.getClientRects().length) return false;
+        const style = getComputedStyle(el);
+        return style.visibility !== 'hidden' && style.visibility !== 'collapse' &&
+            (el.getBoundingClientRect().width > 0 && el.getBoundingClientRect().height > 0);
+    };
+    const enabled = el => !el.matches(':disabled') && el.getAttribute('aria-disabled') !== 'true';
+    const metadata = el => ({type: el.type || '', autocomplete: el.getAttribute('autocomplete') || '',
+        labels: [el.getAttribute('placeholder') || '', el.getAttribute('aria-label') || '',
+                 ...Array.from(el.labels || []).map(label => label.innerText), el.getAttribute('name') || '']});
+    const mark = (el, rank, meta) => {
+        el.setAttribute('data-brainy-direct', marker);
+        return {rank, metadata: meta};
+    };
+    if (mode === 'fill') {
+        for (const el of document.querySelectorAll('input, textarea, [role="combobox"][contenteditable="true"]')) {
+            if (!visible(el) || !enabled(el) || el.readOnly) continue;
+            const meta = metadata(el);
+            if (!meta.labels.some(label => normalize(label).includes(target))) continue;
+            if (!['', 'text', 'search', 'email', 'url', 'tel', 'number', 'textarea', 'password'].includes(meta.type)) continue;
+            return mark(el, 0, meta);
+        }
+        return null;
+    }
+    const groups = [
+        'input[type="radio"], [role="radio"]', 'option, [role="option"]',
+        'input[type="checkbox"], [role="checkbox"]', 'button, input[type="button"], input[type="submit"], [role="button"]',
+        'a[href], [role="link"]', '[role="menuitem"]', '[role="tab"]',
+        'label', '[onclick], [tabindex], select'
+    ];
+    const text = el => {
+        if (el.tagName === 'INPUT') {
+            if (['button', 'submit'].includes(el.type)) return el.value;
+            return Array.from(el.labels || []).filter(visible).map(label => label.innerText).join(' ');
+        }
+        return el.innerText;
+    };
+    for (let rank = 0; rank < groups.length; rank++) {
+        for (const el of document.querySelectorAll(groups[rank])) {
+            if (el.hasAttribute('aria-pressed')) continue;
+            const control = el.tagName === 'OPTION' ? el.closest('select') : el;
+            if (!enabled(el) || !visible(control)) continue;
+            if (normalize(text(el)) === target) return mark(el, rank, null);
+        }
+    }
+    return null;
+}"""
 
 
 class Browser:
@@ -52,7 +105,7 @@ class Browser:
     def page(self, page):
         if page not in self._pages:
             self._pages.append(page)
-            page.set_default_timeout(15000)
+            page.set_default_timeout(5000)
             page.on("close", lambda: self._lifecycle("closed", page))
             page.on("crash", lambda: self._on_crash(page))
             page.on("framenavigated", lambda frame: self._on_navigation(page, frame))
@@ -154,23 +207,32 @@ class Browser:
         parts = urlsplit(url)
         if parts.scheme not in {"http", "https"} or not parts.hostname or parts.username or parts.password:
             raise ValueError("Only HTTP(S) URLs without credentials are allowed")
-        await self.page.goto(url, wait_until="domcontentloaded")
+        await self.page.goto(url, wait_until="domcontentloaded", timeout=5000)
 
     async def screenshot(self):
         # Mask password fields before any image leaves the machine.
         for attempt in range(2):
             page = await self.ensure_page()
             try:
-                await page.wait_for_load_state("domcontentloaded")
-                return await page.screenshot(mask=[page.locator('input[type="password"]')])
+                try:
+                    await page.wait_for_load_state("domcontentloaded", timeout=2500)
+                except PlaywrightTimeoutError:
+                    pass
+                return await asyncio.wait_for(page.screenshot(mask=[page.locator('input[type="password"]')],
+                                                              timeout=4000), timeout=5)
             except Error as exc:
                 if attempt or (not page.is_closed() and page not in self._crashed and "Execution context was destroyed" not in str(exc)):
                     raise
 
     async def page_context(self):
         page = await self.ensure_page()
-        return {"url": page.url, "title": await page.title(),
-                "text": await page.evaluate("() => (document.body?.innerText || '').slice(0, 1500)")}
+        async def read():
+            return {"url": page.url, "title": await page.title(),
+                    "text": await page.evaluate("() => (document.body?.innerText || '').slice(0, 1500)")}
+        try:
+            return await asyncio.wait_for(read(), timeout=3)
+        except (Error, asyncio.TimeoutError):
+            return {"url": page.url, "title": "", "text": "Page context temporarily unavailable during loading."}
 
     async def click(self, x, y):
         self._page_opened.clear()
@@ -211,7 +273,29 @@ class Browser:
     async def find_choice(self, text):
         if not normalize_choice(text):
             return None
-        return await self.select_text(text, exact=True, find_only=True)
+        return await self._find_direct("choose", text)
+
+    async def _find_direct(self, mode, text):
+        try:
+            return await asyncio.wait_for(self._lookup_direct(mode, text), timeout=2)
+        except (Error, asyncio.TimeoutError) as exc:
+            if self.debug:
+                debug_log(f"Direct lookup deferred to Holo ({type(exc).__name__}).")
+            return None
+
+    async def _lookup_direct(self, mode, text):
+        page = await self.ensure_page()
+        marker = uuid4().hex
+        best = None
+        for frame in page.frames:
+            result = await frame.evaluate(DIRECT_LOOKUP, {"mode": mode, "target": normalize_choice(text), "marker": marker})
+            if result is not None and (best is None or result["rank"] < best[0]):
+                if mode == "fill":
+                    self._check_fill_secret(result["metadata"])
+                best = (result["rank"], frame.locator(f'[data-brainy-direct="{marker}"]'))
+                if result["rank"] == 0:
+                    break
+        return best[1] if best else None
 
     async def find_fill(self, field):
         if is_secret_field(field):
@@ -219,30 +303,14 @@ class Browser:
         field = normalize_choice(field)
         if not field:
             return None
-        page = await self.ensure_page()
-        for frame in page.frames:
-            matches = frame.locator('input, textarea, [role="combobox"][contenteditable="true"]')
-            for index in range(await matches.count()):
-                element = matches.nth(index)
-                if not await element.is_visible() or not await element.is_enabled():
-                    continue
-                metadata = await self._fill_metadata(element)
-                labels = [normalize_choice(label) for label in metadata["labels"]]
-                if not any(field in label for label in labels):
-                    continue
-                self._check_fill_secret(metadata)
-                if metadata["type"] not in {"", "text", "search", "email", "url", "tel", "number", "textarea"}:
-                    continue
-                if await element.is_editable():
-                    return element
-        return None
+        return await self._find_direct("fill", field)
 
     async def _fill_metadata(self, element):
         return await element.evaluate("""el => ({
             type: el.type || '', autocomplete: el.getAttribute('autocomplete') || '',
             labels: [el.getAttribute('placeholder') || '', el.getAttribute('aria-label') || '',
                      ...Array.from(el.labels || []).map(label => label.innerText), el.getAttribute('name') || '']
-        })""")
+        })""", timeout=300)
 
     def _check_fill_secret(self, metadata):
         if (metadata["type"] == "password" or
@@ -251,14 +319,66 @@ class Browser:
             raise SecretFieldError()
 
     async def fill_field(self, element, text):
-        await element.click()
-        self._check_fill_secret(await self._fill_metadata(self.page.locator(":focus")))
+        if not await self._direct_click(element):
+            return None
+        try:
+            if not await element.evaluate("el => el === el.ownerDocument.activeElement", timeout=300):
+                return None
+            self._check_fill_secret(await self._fill_metadata(self.page.locator(":focus")))
+        except PlaywrightTimeoutError:
+            return None
         return await self.type(text)
 
+    async def _direct_click(self, element):
+        page = await self.ensure_page()
+        started, loaded = asyncio.Event(), asyncio.Event()
+        def on_request(request):
+            if request.is_navigation_request() and request.frame == page.main_frame:
+                started.set()
+        def on_load():
+            loaded.set()
+        page.on("request", on_request)
+        page.on("domcontentloaded", on_load)
+        try:
+            result = await self._click_direct_element(element)
+            if result:
+                try:
+                    await asyncio.wait_for(started.wait(), timeout=0.15)
+                    await asyncio.wait_for(loaded.wait(), timeout=2.5)
+                except asyncio.TimeoutError:
+                    pass
+            return result
+        finally:
+            page.remove_listener("request", on_request)
+            page.remove_listener("domcontentloaded", on_load)
+
+    async def _click_direct_element(self, element):
+        try:
+            await element.click(timeout=500, no_wait_after=True)
+            return True
+        except PlaywrightTimeoutError:
+            try:
+                box = await element.bounding_box(timeout=300)
+                if box:
+                    await self.page.mouse.click(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+                    return True
+            except PlaywrightTimeoutError:
+                pass
+            return False
+
     async def select_choice(self, element, text):
-        return await self._select_first_visible(element, text, exact=True)
+        try:
+            return await self._select_first_visible(element, text, exact=True, fast=True)
+        except PlaywrightTimeoutError:
+            return None
 
     async def select_text(self, text, exact=False, find_only=False):
+        try:
+            return await asyncio.wait_for(self._resolve_text(text, exact, find_only), timeout=5)
+        except (Error, asyncio.TimeoutError):
+            return None
+
+    async def _resolve_text(self, text, exact=False, find_only=False):
         page = await self.ensure_page()
         name = re.compile(".*" if exact else re.escape(text), re.I)
         options = {"exact": True, "find_only": find_only} if exact else {}
@@ -276,10 +396,11 @@ class Browser:
                     return result
         return None
 
-    async def _select_first_visible(self, matches, text, exact=False, find_only=False):
+    async def _select_first_visible(self, matches, text, exact=False, find_only=False, fast=False):
         for index in range(await matches.count()):
             element = matches.nth(index)
-            kind = await element.evaluate("el => ({tag: el.tagName, type: el.type, role: el.getAttribute('role')})")
+            kind = await element.evaluate("el => ({tag: el.tagName, type: el.type, role: el.getAttribute('role')})",
+                                          timeout=300 if fast else 15000)
             if exact:
                 label = await element.evaluate("""el => {
                     const control = el.closest('button, a[href], input, select, option, label, [role="radio"], [role="option"], [role="checkbox"], [role="button"], [role="link"], [role="menuitem"], [role="tab"], [onclick], [tabindex]');
@@ -290,7 +411,7 @@ class Browser:
                             .map(label => label.innerText).join(' ');
                     }
                     return control.innerText;
-                }""")
+                }""", timeout=300 if fast else 15000)
                 if label is None or normalize_choice(label) != normalize_choice(text):
                     continue
             if kind["tag"] == "OPTION":
@@ -299,21 +420,35 @@ class Browser:
                     continue
                 if find_only:
                     return element
-                await select.scroll_into_view_if_needed()
-                await select.select_option(label=await element.evaluate("el => el.label"))
+                await select.scroll_into_view_if_needed(**({"timeout": 500} if fast else {}))
+                await select.select_option(label=await element.evaluate("el => el.label", timeout=300 if fast else 15000),
+                                           **({"timeout": 500} if fast else {}))
             else:
                 if not await element.is_visible():
                     continue
                 if find_only:
                     return element
-                await element.scroll_into_view_if_needed()
+                if not fast:
+                    await element.scroll_into_view_if_needed()
                 if kind.get("type") in {"radio", "checkbox"} or kind.get("role") in {"radio", "checkbox"}:
-                    await element.check()
+                    if fast:
+                        try:
+                            await element.check(timeout=500, no_wait_after=True)
+                        except PlaywrightTimeoutError:
+                            if not await self._direct_click(element):
+                                return None
+                    else:
+                        await element.check()
                 elif kind["tag"] == "SELECT":
-                    await element.select_option(label=text)
+                    await element.select_option(label=text, **({"timeout": 500} if fast else {}))
                 else:
-                    await element.click()
-            await self._wait_for_page()
+                    if fast:
+                        if not await self._direct_click(element):
+                            return None
+                    else:
+                        await element.click()
+            if not fast:
+                await self._wait_for_page()
             try:
                 state = await element.evaluate("""el => {
                     const control = el.control || el.querySelector('input[type="radio"], input[type="checkbox"]') || el;
@@ -324,9 +459,11 @@ class Browser:
                     }
                     if (control.tagName === 'OPTION') state.selected = control.selected;
                     return state;
-                }""")
+                }""", timeout=300 if fast else 15000)
             except Error:
                 state = {}
+            if fast and (state.get("checked") is False or state.get("aria-checked") == "false"):
+                return None
             details = ", ".join(f"{key}={str(value).lower()}" for key, value in state.items())
             return f"Selected {text!r}: " + (details or "clicked; inspect next screenshot for page change")
 
@@ -334,4 +471,31 @@ class Browser:
         await self.page.keyboard.press(key)
 
     async def scroll(self, direction):
-        await self.page.mouse.wheel(0, -600 if direction == "up" else 600)
+        page = await self.ensure_page()
+        delta = -600 if direction == "up" else 600
+        state = """() => [window.scrollX, window.scrollY, ...Array.from(document.querySelectorAll('*'))
+            .filter(el => el.scrollHeight > el.clientHeight && el.clientHeight > 0)
+            .map(el => el.scrollTop)]"""
+        async def perform():
+            before = await page.evaluate(state)
+            await page.mouse.move(self.viewport[0] / 2, self.viewport[1] / 2)
+            await page.mouse.wheel(0, delta)
+            await page.wait_for_timeout(100)
+            if before != await page.evaluate(state):
+                return "Scrolled the content under the viewport center."
+            moved = await page.evaluate("""delta => {
+                const candidates = [document.scrollingElement, ...document.querySelectorAll('*')]
+                    .filter(el => el && el.clientHeight > 0 && el.scrollHeight > el.clientHeight &&
+                        (el === document.scrollingElement || /auto|scroll/.test(getComputedStyle(el).overflowY)))
+                    .filter(el => { const r = el.getBoundingClientRect();
+                        return r.bottom > 0 && r.top < innerHeight && r.right > 0 && r.left < innerWidth; });
+                candidates.sort((a,b) => b.clientWidth*b.clientHeight - a.clientWidth*a.clientHeight);
+                for (const el of candidates) {
+                    const before = el.scrollTop;
+                    el.scrollTop += delta;
+                    if (el.scrollTop !== before) return true;
+                }
+                return false;
+            }""", delta)
+            return "Scrolled an inner scroll container." if moved else "Scroll had no effect; try another direction or approach."
+        return await asyncio.wait_for(perform(), timeout=3)
