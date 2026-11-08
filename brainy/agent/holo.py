@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import json
 import re
@@ -74,7 +75,15 @@ class HoloClient:
         if self.http is None:
             # One client for the whole task: no new TLS handshake per model call.
             self.http = httpx.AsyncClient(timeout=90)
-        return await send(self.http)
+        for attempt in range(3):
+            try:
+                return await send(self.http)
+            except (httpx.TransportError, httpx.HTTPStatusError) as exc:
+                status = exc.response.status_code if isinstance(exc, httpx.HTTPStatusError) else None
+                if attempt == 2 or (status is not None and status != 429 and status < 500):
+                    raise
+                # A busy or briefly unreachable API must not end a booking that is almost done.
+                await asyncio.sleep(1 + attempt)
 
     async def decide(self, screenshot, goal, history, page_context=None):
         prompt = (

@@ -374,6 +374,17 @@ class HTTPTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn(b"data:image/png;base64,", requests[0].content)
         self.assertIn(b"Localize an element on the GUI image", requests[1].content)
 
+    async def test_http_retries_busy_api(self):
+        codes = iter([503, 429, 200])
+
+        def respond(_):
+            code = next(codes)
+            return httpx.Response(code, json={"choices": [{"message": {"content": '{"action":"done"}'}}]})
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as http:
+            with patch("brainy.agent.holo.asyncio.sleep", AsyncMock()):
+                self.assertEqual((await HoloClient("test-key", http=http).decide(b"png", "test", [])).action, "done")
+
     async def test_http_error(self):
         async with httpx.AsyncClient(transport=httpx.MockTransport(lambda _: httpx.Response(401))) as http:
             with self.assertRaises(httpx.HTTPStatusError):
