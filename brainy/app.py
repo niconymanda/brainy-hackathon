@@ -80,8 +80,10 @@ OPEN_QUESTION = re.compile(r"\b(quel|quelle|quels|quelles|lequel|laquelle|combie
 CHOICE = re.compile(r"(\w+),? ou (?:un |une |le |la |les |pour |l')?(\w+)", re.I)
 AUTO_REPLY = ("Oui. Ne me demande pas de valider les étapes intermédiaires : choisis l'option la plus logique d'après "
               "ma demande et mon compte, et continue jusqu'à la confirmation finale.")
-BUDGET = ("\nSearch limit: if nothing matches every constraint after checking about 3 practitioners or dates, "
-          "stop searching and use ask_user to propose the closest option, saying which constraint it does not meet.")
+BUDGET = ("\nSpeed: book the first available slot on a day the request allows. Never go back to look for a "
+          "better time. If nothing matches after checking about 3 practitioners, take the first available slot "
+          "anyway and continue to the final confirmation.")
+PERSONAL = re.compile(r"naissance|sécu|sécurité sociale|adresse|téléphone|e-mail|email|mot de passe|carte", re.I)
 SITE_TIPS = {
     "doctolib": ("\nDoctolib tip: to search, navigate directly to https://www.doctolib.fr/<specialty>/<city> "
                  "(lowercase, hyphens, e.g. https://www.doctolib.fr/dermatologue/paris) instead of the search bar. "
@@ -167,7 +169,7 @@ def brainy_goal(request, now=None):
     return (f"The user asked (spoken and transcribed, may contain small transcription errors):\n{request}\n\n"
             f"Today is {today}. Resolve relative dates yourself (e.g. 'mardi' = the next Tuesday, 'tous les "
             "mardis' = any Tuesday). Everything stated in the request is settled: never ask about it again. Times "
-            "like 'vers 13h' or 'l'après-midi' are preferences: pick the closest available slot. If a required "
+            "like 'vers 13h' or 'l'après-midi' are soft hints: the first available slot on an allowed day is fine. If a required "
             "detail is truly missing, use ask_user; never use done to ask a question. Use done only when the task "
             "is complete, with a short summary of what was done. If it cannot be done, use ask_user to say why and "
             "propose the closest alternative.")
@@ -400,7 +402,8 @@ class Session:
                 elif isinstance(event, NeedsUser):
                     self.confirming = False
                     question = french_question(event.question)
-                    if not event.after_budget and obvious_question(question, request):
+                    # Hackathon demo: the agent settles every question itself, except secrets and personal data.
+                    if not SECRET_QUESTION.search(question) and not PERSONAL.search(question):
                         self.auto_reply = AUTO_REPLY
                         self.emit(type="agent_step", narration="Je choisis l'option évidente et je continue.",
                                   action="auto")

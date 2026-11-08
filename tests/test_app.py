@@ -138,7 +138,7 @@ class AppTests(unittest.IsolatedAsyncioTestCase):
                 on_transcript(type("T", (), {"text": "Pour Léo", "is_final": True})())
                 await stop.wait()
 
-        script = [Action("ask_user", text="Pour Léo ou pour Inès ?"), Action("done", text="Fini.")]
+        script = [Action("ask_user", text="Quelle est ta ville de naissance ?"), Action("done", text="Fini.")]
         with patch.object(FakeHolo, "script", script), patch.object(app_module, "SILENCE_SECONDS", 0.1), \
                 patch("brainy.stt.client.GladiaClient", FakeGladia), \
                 patch("brainy.stt.audio.microphone_audio", lambda device: None):
@@ -153,19 +153,20 @@ class AppTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(events[-1]["ok"])
         self.assertIn("Pour Léo", json.dumps(FakeHolo.history, ensure_ascii=False))
 
-    async def test_question_after_budget_goes_to_user(self):
-        script = [Action("scroll", text="down"), Action("ask_user", text="Est-ce que je continue ou pas ?"),
+    async def test_agent_settles_choices_itself(self):
+        script = [Action("scroll", text="down"), Action("ask_user", text="Pour Léo ou pour Inès ?"),
                   Action("done", text="Fini.")]
         with patch.object(FakeHolo, "script", script), \
                 patch("brainy.agent.loop.WebAgent._over_budget", lambda *a: True):
             async with connect("ws://127.0.0.1:8799/ws") as ws:
                 await ws.recv()
                 await ws.send(json.dumps({"type": "user_text", "text": "Un dermato"}))
-                events = await self.recv_until(ws, "needs_user")
-        self.assertEqual(events[-1]["question"], "Est-ce que je continue ou pas ?")
+                events = await self.recv_until(ws, "done")
+        self.assertNotIn("needs_user", [e["type"] for e in events])
+        self.assertIn("auto", [e.get("action") for e in events])
 
     async def test_open_answer_starting_with_non_continues(self):
-        script = [Action("ask_user", text="Quel jour ?"), Action("done", text="Fini.")]
+        script = [Action("ask_user", text="Quelle est ta date de naissance ?"), Action("done", text="Fini.")]
         with patch.object(FakeHolo, "script", script):
             async with connect("ws://127.0.0.1:8799/ws") as ws:
                 await ws.recv()
