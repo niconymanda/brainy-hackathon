@@ -398,7 +398,7 @@ async def book_doctolib(page, url, say, confirm, max_steps=60, request="", on_pa
     await page.goto(url, wait_until="domcontentloaded")
     await page.wait_for_timeout(2500)
     tried, idle = set(), 0
-    first_visit = not FOLLOW_UP.search(request)
+    first_visit = bool(FIRST_VISIT.search(request)) or not FOLLOW_UP.search(request)
     constraint = parse_day_constraint(request)
     slot_started = None
     first_slot = None
